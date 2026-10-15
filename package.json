@@ -1,0 +1,25 @@
+{
+  "name": "alitheia-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "npm@10.9.0",
+  "description": "Alitheia - Sistem Deteksi Berita Hoax Berbasis AI",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "lint": "turbo lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

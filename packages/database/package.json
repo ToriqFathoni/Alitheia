@@ -1,0 +1,8 @@
+{
+  "name": "@alitheia/database",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Database models and client for Alitheia",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts"
+}
