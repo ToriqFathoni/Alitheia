@@ -1,23 +1,15 @@
-import express, { Request, Response } from "express";
-import cors from "cors";
-import dotenv from "dotenv";
+import { app } from "./app.js";
+import { env } from "./config/env.js";
+import { logger } from "./lib/logger.js";
 
-dotenv.config();
-
-const app = express();
-const PORT = process.env.PORT || 5000;
-
-app.use(cors());
-app.use(express.json());
-
-app.get("/api/health", (_req: Request, res: Response) => {
-  res.json({
-    status: "ok",
-    service: "Alitheia AI Detection API",
-    timestamp: new Date().toISOString(),
-  });
+const server = app.listen(env.PORT, () => {
+  logger.info(`[Alitheia API] Server berjalan di port ${env.PORT} pada environment ${env.NODE_ENV}`);
 });
 
-app.listen(PORT, () => {
-  console.log(`[Alitheia API] Server is running on port ${PORT}`);
+process.on("SIGTERM", () => {
+  logger.info("[Alitheia API] Menerima SIGTERM, menutup server secara graceful...");
+  server.close(() => {
+    logger.info("[Alitheia API] Server telah ditutup.");
+    process.exit(0);
+  });
 });
