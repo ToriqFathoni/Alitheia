@@ -1,9 +1,21 @@
-// Database schema & client placeholder for Alitheia
-export interface DatabaseConfig {
-  connectionUrl?: string;
+import { PrismaClient } from "@prisma/client";
+
+// Mencegah pembuatan instance ganda PrismaClient saat hot reload di environment development
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    log:
+      process.env.NODE_ENV === "development"
+        ? ["query", "error", "warn"]
+        : ["error"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
 }
 
-export const connectDatabase = async (config?: DatabaseConfig) => {
-  console.log("[Alitheia Database] Initializing database client...", config);
-  return { connected: true };
-};
+export * from "@prisma/client";

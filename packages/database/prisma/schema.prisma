@@ -1,0 +1,144 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto, vector]
+}
+
+model Pengguna {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  peran     String   @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  riwayatKueri RiwayatKueri[]
+  umpanBalik   UmpanBalik[]
+
+  @@map("pengguna")
+}
+
+model RiwayatKueri {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  penggunaId String?  @map("pengguna_id") @db.Uuid
+  tipeInput  String   @map("tipe_input") @db.VarChar(32)
+  inputTeks  String?  @map("input_teks") @db.Text
+  urlSumber  String?  @map("url_sumber") @db.Text
+  status     String   @default("PENDING") @db.VarChar(32) // PENDING | PROCESSING | DONE | FAILED
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  pengguna Pengguna? @relation(fields: [penggunaId], references: [id], onDelete: Cascade)
+  klaim    Klaim[]
+
+  @@index([penggunaId, createdAt(sort: Desc)])
+  @@index([status])
+  @@map("riwayat_kueri")
+}
+
+model Klaim {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kueriId      String   @map("kueri_id") @db.Uuid
+  kalimatKlaim String   @map("kalimat_klaim") @db.Text
+  subjek       String?  @db.Text
+  tindakan     String?  @db.Text
+  objek        String?  @db.Text
+  posisiAwal   Int?     @map("posisi_awal")  // offset karakter untuk highlight UI
+  posisiAkhir  Int?     @map("posisi_akhir")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  kueri        RiwayatKueri  @relation(fields: [kueriId], references: [id], onDelete: Cascade)
+  bukti        Bukti[]
+  logPrediksi  LogPrediksi[]
+
+  @@index([kueriId])
+  @@map("klaim")
+}
+
+model Bukti {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  klaimId    String   @map("klaim_id") @db.Uuid
+  asalBukti  String   @map("asal_bukti") @db.VarChar(64) // FACT_CHECK_API | WEB_SEARCH | VECTOR_DB
+  urlRujukan String?  @map("url_rujukan") @db.Text
+  kutipan    String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  klaim Klaim @relation(fields: [klaimId], references: [id], onDelete: Cascade)
+
+  @@index([klaimId])
+  @@map("bukti")
+}
+
+model LogPrediksi {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  klaimId          String   @map("klaim_id") @db.Uuid
+  labelNli         String   @map("label_nli") @db.VarChar(32)   // ENTAILMENT | CONTRADICTION | NEUTRAL
+  skorKepercayaan  Decimal  @map("skor_kepercayaan") @db.Decimal(5, 4)
+  hasilAkhir       String   @map("hasil_akhir") @db.VarChar(32) // BENAR | SALAH | TIDAK_PASTI
+  metadataKonteks  Json?    @map("metadata_konteks") @db.JsonB
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  klaim            Klaim                 @relation(fields: [klaimId], references: [id], onDelete: Cascade)
+  logKesalahan     LogKesalahanPrediksi[]
+  umpanBalik       UmpanBalik[]
+
+  @@index([klaimId])
+  @@index([hasilAkhir, createdAt])
+  @@map("log_prediksi")
+}
+
+model LogKesalahanPrediksi {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prediksiId         String   @map("prediksi_id") @db.Uuid
+  deskripsiKesalahan String   @map("deskripsi_kesalahan") @db.Text
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  prediksi LogPrediksi @relation(fields: [prediksiId], references: [id], onDelete: Cascade)
+
+  @@index([prediksiId])
+  @@map("log_kesalahan_prediksi")
+}
+
+model UmpanBalik {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prediksiId    String   @map("prediksi_id") @db.Uuid
+  penggunaId    String?  @map("pengguna_id") @db.Uuid
+  isiUmpanBalik String   @map("isi_umpan_balik") @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  prediksi LogPrediksi @relation(fields: [prediksiId], references: [id], onDelete: Cascade)
+  pengguna Pengguna?   @relation(fields: [penggunaId], references: [id], onDelete: SetNull)
+
+  @@index([prediksiId])
+  @@index([penggunaId])
+  @@map("umpan_balik")
+}
+
+model DataAnalitik {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  periode             DateTime @unique @db.Date
+  totalKueri          Int      @map("total_kueri")
+  totalKlaim          Int      @map("total_klaim")
+  jumlahEntailment    Int      @map("jumlah_entailment")
+  jumlahContradiction Int      @map("jumlah_contradiction")
+  jumlahNeutral       Int      @map("jumlah_neutral")
+  rataSkorKepercayaan Decimal  @map("rata_skor_kepercayaan") @db.Decimal(5, 4)
+
+  @@map("data_analitik")
+}
+
+// Model untuk penyimpanan dokumen vektor (pgvector)
+model DokumenVektor {
+  id              String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  judul           String?                      @db.Text
+  isi             String?                      @db.Text
+  urlRujukan      String?                      @map("url_rujukan") @db.Text
+  sumber          String?                      @db.VarChar(128)
+  labelSumber     String?                      @map("label_sumber") @db.VarChar(32)
+  kredibilitas    Decimal?                     @db.Decimal(3, 2)
+  diterbitkanPada DateTime?                    @map("diterbitkan_pada") @db.Date
+  embedding       Unsupported("vector(1536)")?
+
+  @@map("dokumen_vektor")
+}
