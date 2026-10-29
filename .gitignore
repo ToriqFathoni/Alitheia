@@ -53,3 +53,4 @@ lerna-debug.log*
 ._*
 Thumbs.db
 ehthumbs.db
+/.agent
