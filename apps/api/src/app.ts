@@ -4,7 +4,11 @@ import { env } from "./config/env.js";
 import { requestIdMiddleware } from "./middleware/request-id.middleware.js";
 import { notFoundHandler, errorHandler } from "./middleware/error.middleware.js";
 import { verificationRouter } from "./modules/verification/verification.routes.js";
+import { verificationWorker } from "./modules/verification/verification.worker.js";
 import type { ApiResponseSuccess } from "@alitheia/shared-types";
+
+// Inisialisasi worker latar belakang untuk pipeline analisis
+verificationWorker.init();
 
 export const app = express();
 

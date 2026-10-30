@@ -12,6 +12,8 @@ import type {
 import { VerificationDetailDataSchema } from "@alitheia/shared-types";
 import { verificationRepository } from "./verification.repository.js";
 import { AppError } from "../../middleware/error.middleware.js";
+import { validateUrlSafety } from "../ingestion/url-validator.js";
+import { verificationQueue } from "../../lib/queue/verification-queue.js";
 
 function parseExplanationFromContext(metadata: unknown): string | undefined {
   if (
@@ -27,11 +29,22 @@ function parseExplanationFromContext(metadata: unknown): string | undefined {
 
 export const verificationService = {
   async createVerification(dto: CreateVerificationDTO): Promise<CreateVerificationResponseDTO> {
+    if (dto.type === "URL") {
+      validateUrlSafety(dto.url);
+    }
+
     const kueri = await verificationRepository.createKueri({
       tipeInput: dto.type,
       inputTeks: dto.type === "TEKS" ? dto.text : null,
       urlSumber: dto.type === "URL" ? dto.url : null,
       status: "PENDING",
+    });
+
+    await verificationQueue.enqueue({
+      verificationId: kueri.id,
+      type: dto.type,
+      url: dto.type === "URL" ? dto.url : undefined,
+      text: dto.type === "TEKS" ? dto.text : undefined,
     });
 
     return {
