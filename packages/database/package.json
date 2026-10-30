@@ -10,6 +10,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "prisma db seed",
+    "test": "tsx --test src/utils/normalizeUrl.test.ts",
     "build": "prisma generate && tsc"
   },
   "prisma": {

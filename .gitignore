@@ -54,3 +54,10 @@ lerna-debug.log*
 Thumbs.db
 ehthumbs.db
 /.agent
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/

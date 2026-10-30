@@ -1,0 +1,40 @@
+# Dependencies
+node_modules
+
+# Build outputs
+.next
+out
+dist
+build
+
+# Version control
+.git
+.gitignore
+
+# Environment (will be injected via docker-compose)
+.env
+.env.*
+*.env
+
+# Editor / OS
+.vscode
+.idea
+*.sw?
+.DS_Store
+Thumbs.db
+
+# Turbo cache
+.turbo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Docker files (prevent recursive context)
+Dockerfile*
+docker-compose*.yml
+
+# Misc
+coverage
+plan
+.agent

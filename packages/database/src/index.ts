@@ -19,3 +19,5 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export * from "@prisma/client";
+export * from "./repositories/checks";
+export { normalizeUrl, detectPlatform, isValidUrl } from "./utils/normalizeUrl";

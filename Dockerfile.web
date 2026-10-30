@@ -1,0 +1,78 @@
+# ==============================================================================
+# Dockerfile.web — Alitheia Next.js Frontend (Ubuntu 24.04 + Node 22 LTS)
+# ==============================================================================
+# Multi-stage build:
+#   base   → Ubuntu 24.04 + Node.js 22
+#   deps   → npm ci (all dependencies)
+#   builder→ next build (standalone output)
+#   runner → minimal production image with standalone server
+# ==============================================================================
+
+# ---------- Stage 1: base ----------
+FROM ubuntu:24.04 AS base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl gnupg && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get purge -y gnupg && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ---------- Stage 2: deps ----------
+FROM base AS deps
+
+# Copy workspace root manifests
+COPY package.json package-lock.json turbo.json ./
+
+# Copy every workspace package.json (preserving directory structure)
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/api/package.json ./apps/api/package.json
+COPY packages/config/package.json ./packages/config/package.json
+COPY packages/database/package.json ./packages/database/package.json
+COPY packages/shared-types/package.json ./packages/shared-types/package.json
+
+# Install ALL dependencies (dev included — needed for build tooling)
+RUN npm ci
+
+# ---------- Stage 3: builder ----------
+FROM deps AS builder
+
+# Copy all source code
+COPY packages/ ./packages/
+COPY apps/web/ ./apps/web/
+
+# Build Next.js (standalone output)
+RUN npm run build --workspace=apps/web
+
+# ---------- Stage 4: runner ----------
+FROM base AS runner
+
+ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+WORKDIR /app
+
+# Copy standalone server output
+COPY --from=builder /app/apps/web/.next/standalone/ ./
+
+# Copy static assets (not included in standalone)
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+
+# Copy public assets
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+EXPOSE 3000
+
+CMD ["node", "apps/web/server.js"]

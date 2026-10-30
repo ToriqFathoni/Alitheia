@@ -1,7 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
 import type { ReactNode, SVGProps } from "react";
+import { useRouter } from "next/navigation";
+import { submitCheck, submitTextCheck } from "./lib/api";
+import Navbar from "./components/Navbar";
 
 /* -------------------------------------------------------------------------- */
 /*  Design tokens (from Figma selection colors)                               */
@@ -60,18 +63,6 @@ const FileUpIcon = (p: IconProps) => (
     <path d="m9 15 3-3 3 3" />
   </Icon>
 );
-const BuildingIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <rect width="16" height="20" x="4" y="2" rx="2" />
-    <path d="M9 22v-4h6v4" />
-    <path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01" />
-  </Icon>
-);
-const ChevronDownIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="m6 9 6 6 6-6" />
-  </Icon>
-);
 const ChevronRightIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="m9 18 6-6-6-6" />
@@ -118,12 +109,6 @@ const TABS: { id: TabId; label: string; icon: (p: IconProps) => ReactNode }[] = 
   { id: "upload", label: "Upload document", icon: FileUpIcon },
 ];
 
-const NAV_LINKS = [
-  { label: "Fact check", active: true },
-  { label: "History", active: false },
-  { label: "Methodology", active: false },
-];
-
 type Verdict = "False" | "True";
 
 const LIVE_CHECKS: { verdict: Verdict; title: string; time?: string }[] = [
@@ -151,83 +136,86 @@ function VerdictBadge({ verdict }: { verdict: Verdict }) {
   );
 }
 
-function Navbar() {
-  return (
-    <header className="border-b border-[#E5E7EB] bg-white">
-      <div className="mx-auto flex h-[50px] w-full max-w-[1400px] items-center justify-between px-6 sm:px-7">
-        {/* Left: logo + nav */}
-        <div className="flex items-center gap-6 sm:gap-8">
-          <a
-            href="#"
-            id="nav-logo"
-            className="flex items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4338CA]"
-          >
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#0F172A] text-[13px] font-bold leading-none text-white">
-              a.
-            </span>
-            <span className="text-[17px] font-medium tracking-tight text-[#0F172A]">alitheia</span>
-          </a>
-
-          <nav aria-label="Primary" className="hidden items-center gap-5 sm:flex">
-            {NAV_LINKS.map((link) => (
-              <a
-                key={link.label}
-                id={`nav-${link.label.toLowerCase().replace(/\s+/g, "-")}`}
-                href="#"
-                aria-current={link.active ? "page" : undefined}
-                className={`text-[12px] transition-colors hover:text-[#0F172A] ${
-                  link.active ? "font-bold text-[#0F172A]" : "font-normal text-[#64748B]"
-                }`}
-              >
-                {link.label}
-              </a>
-            ))}
-          </nav>
-        </div>
-
-        {/* Right: workspace + avatar */}
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            id="workspace-switcher"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-[#475569] transition-colors hover:bg-[#F1F5F9] hover:text-[#0F172A]"
-          >
-            <BuildingIcon size={14} />
-            <span className="hidden sm:inline">Editorial workspace</span>
-            <ChevronDownIcon size={13} />
-          </button>
-          <span className="hidden h-5 w-px bg-[#E5E7EB] sm:block" />
-          <button
-            type="button"
-            id="user-avatar"
-            aria-label="Account: ER"
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1F5F9] text-[10px] font-semibold text-[#475569] transition-colors hover:bg-[#E2E8F0]"
-          >
-            ER
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
-
 /* -------------------------------------------------------------------------- */
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState<TabId>("text");
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#F9FAFB]"><Navbar /><main className="max-w-3xl mx-auto px-4 py-10"><div className="animate-pulse space-y-4"><div className="h-12 bg-gray-200 rounded w-2/3 mx-auto" /><div className="h-6 bg-gray-200 rounded w-1/2 mx-auto" /><div className="h-48 bg-gray-200 rounded mt-8" /></div></main></div>}>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+function HomeContent() {
+  const router = useRouter();
+
+  const [activeTab, setActiveTab] = useState<TabId>("url");
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const wordCount = useMemo(() => {
     const trimmed = text.trim();
     return trimmed ? trimmed.split(/\s+/).length : 0;
   }, [text]);
 
-  const overLimit = wordCount > MAX_WORDS;
+  const overLimit = activeTab === "text" && wordCount > MAX_WORDS;
   const formattedCount = wordCount.toLocaleString("en-US");
   const formattedMax = MAX_WORDS.toLocaleString("en-US");
+
+  const handleAnalyze = async () => {
+    setError(null);
+    setToastMessage(null);
+
+    if (activeTab === "url") {
+      if (!url.trim()) {
+        setError("Please enter a valid social media URL (e.g. TikTok, Instagram, Twitter/X)");
+        return;
+      }
+
+      setSubmitting(true);
+      try {
+        const result = await submitCheck(url.trim());
+        if (result && result.id) {
+          router.push(`/checks/${result.id}`);
+        } else {
+          throw new Error("Invalid response received from server");
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to analyze URL");
+        setSubmitting(false);
+      }
+    } else if (activeTab === "text") {
+      if (!text.trim() || text.trim().length < 10) {
+        setError("Please enter at least 10 characters of text to fact-check");
+        return;
+      }
+      if (overLimit) {
+        setError(`Text exceeds maximum ${formattedMax} words`);
+        return;
+      }
+
+      setSubmitting(true);
+      try {
+        const result = await submitTextCheck(text.trim());
+        if (result && result.id) {
+          router.push(`/checks/${result.id}`);
+        } else {
+          throw new Error("Invalid response received from server");
+        }
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to analyze text");
+        setSubmitting(false);
+      }
+    } else if (activeTab === "upload") {
+      setToastMessage("Upload analysis coming soon");
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-[#F9FAFB] font-sans text-[#0F172A]">
@@ -262,7 +250,11 @@ export default function HomePage() {
                     id={`tab-${id}`}
                     aria-selected={isActive}
                     aria-controls={`panel-${id}`}
-                    onClick={() => setActiveTab(id)}
+                    onClick={() => {
+                      setActiveTab(id);
+                      setError(null);
+                      setToastMessage(null);
+                    }}
                     className={`-mb-px flex items-center gap-2 border-b-2 py-3.5 text-[12px] transition-colors ${
                       isActive
                         ? "border-[#4338CA] font-semibold text-[#4338CA]"
@@ -275,6 +267,46 @@ export default function HomePage() {
                 );
               })}
             </div>
+
+            {/* Error or Notice Banners */}
+            {error && (
+              <div className="mx-4 mt-3 flex items-start justify-between rounded-xl border border-red-200 bg-red-50 p-3 text-[12px] text-[#991B1B]">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 shrink-0 text-[#DC2626]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <circle cx="12" cy="12" r="10" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01" />
+                  </svg>
+                  <span>{error}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setError(null)}
+                  className="text-[#991B1B] hover:opacity-70"
+                  aria-label="Dismiss error"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+            )}
+
+            {toastMessage && (
+              <div className="mx-4 mt-3 flex items-start justify-between rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-[#92400E]">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 shrink-0 text-[#D97706]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>{toastMessage}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setToastMessage(null)}
+                  className="text-[#92400E] hover:opacity-70"
+                  aria-label="Dismiss message"
+                >
+                  <XIcon size={14} />
+                </button>
+              </div>
+            )}
 
             {/* Panels */}
             <div className="h-[156px] px-4 pt-4">
@@ -316,11 +348,17 @@ export default function HomePage() {
                     type="url"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    placeholder="https://example.com/news/article"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAnalyze();
+                      }
+                    }}
+                    placeholder="https://www.tiktok.com/@user/video/... or Instagram / X URL"
                     className="w-full border-0 bg-transparent p-0 text-[13px] text-[#0F172A] outline-none ring-0 placeholder:text-[#94A3B8] focus:outline-none focus:ring-0"
                   />
                   <p className="mt-2 text-[11px] text-[#64748B]">
-                    We&apos;ll extract the article body and check the claims it contains.
+                    Enter a link from TikTok, Instagram, or Twitter/X. We&apos;ll download media, extract audio/OCR, and verify claims.
                   </p>
                 </div>
               )}
@@ -365,11 +403,24 @@ export default function HomePage() {
               <button
                 type="button"
                 id="analyze-verify"
-                disabled={overLimit}
+                onClick={handleAnalyze}
+                disabled={overLimit || submitting}
                 className="group flex shrink-0 items-center gap-2 rounded-xl bg-[#4338CA] px-5 py-3 text-[12px] font-semibold text-[#FFFFFF] shadow-[0_6px_16px_-6px_rgba(67,56,202,0.6)] transition-all hover:-translate-y-px hover:bg-[#3730A3] hover:shadow-[0_10px_20px_-6px_rgba(67,56,202,0.65)] active:translate-y-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4338CA] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
               >
-                <ArrowRightIcon size={14} className="transition-transform group-hover:translate-x-0.5" />
-                Analyze &amp; Verify
+                {submitting ? (
+                  <>
+                    <svg className="h-3.5 w-3.5 animate-spin text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span>Analyzing...</span>
+                  </>
+                ) : (
+                  <>
+                    <ArrowRightIcon size={14} className="transition-transform group-hover:translate-x-0.5" />
+                    <span>Analyze &amp; Verify</span>
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -384,6 +435,8 @@ export default function HomePage() {
                 onClick={() => {
                   setActiveTab("text");
                   setText(SAMPLE_TEXT);
+                  setError(null);
+                  setToastMessage(null);
                 }}
                 className="inline-flex items-center gap-1 font-semibold text-[#4338CA] transition-colors hover:text-[#3730A3] hover:underline"
               >
@@ -406,14 +459,11 @@ export default function HomePage() {
               <ul className="scrollbar-none flex min-w-0 flex-1 items-center gap-4 overflow-x-auto whitespace-nowrap">
                 {LIVE_CHECKS.map((item, index) => (
                   <li key={item.title} className="flex shrink-0 items-center gap-4">
-                    <a
-                      href="#"
-                      className="group flex items-center gap-2.5 rounded-md text-[11px] text-[#475569] transition-colors hover:text-[#0F172A]"
-                    >
+                    <span className="flex items-center gap-2.5 rounded-md text-[11px] text-[#475569]">
                       <VerdictBadge verdict={item.verdict} />
-                      <span className="group-hover:underline group-hover:underline-offset-2">{item.title}</span>
+                      <span>{item.title}</span>
                       {item.time && <span className="text-[10px] text-[#94A3B8]">{item.time}</span>}
-                    </a>
+                    </span>
                     {index < LIVE_CHECKS.length - 1 && <span className="h-3.5 w-px bg-[#E5E7EB]" />}
                   </li>
                 ))}
