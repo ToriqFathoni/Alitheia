@@ -44,13 +44,13 @@ model Klaim {
   subjek       String?  @db.Text
   tindakan     String?  @db.Text
   objek        String?  @db.Text
-  posisiAwal   Int?     @map("posisi_awal")  // offset karakter untuk highlight UI
+  posisiAwal   Int?     @map("posisi_awal") // offset karakter untuk highlight UI
   posisiAkhir  Int?     @map("posisi_akhir")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
 
-  kueri        RiwayatKueri  @relation(fields: [kueriId], references: [id], onDelete: Cascade)
-  bukti        Bukti[]
-  logPrediksi  LogPrediksi[]
+  kueri       RiwayatKueri  @relation(fields: [kueriId], references: [id], onDelete: Cascade)
+  bukti       Bukti[]
+  logPrediksi LogPrediksi[]
 
   @@index([kueriId])
   @@map("klaim")
@@ -71,17 +71,17 @@ model Bukti {
 }
 
 model LogPrediksi {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  klaimId          String   @map("klaim_id") @db.Uuid
-  labelNli         String   @map("label_nli") @db.VarChar(32)   // ENTAILMENT | CONTRADICTION | NEUTRAL
-  skorKepercayaan  Decimal  @map("skor_kepercayaan") @db.Decimal(5, 4)
-  hasilAkhir       String   @map("hasil_akhir") @db.VarChar(32) // BENAR | SALAH | TIDAK_PASTI
-  metadataKonteks  Json?    @map("metadata_konteks") @db.JsonB
-  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  klaimId         String   @map("klaim_id") @db.Uuid
+  labelNli        String   @map("label_nli") @db.VarChar(32) // ENTAILMENT | CONTRADICTION | NEUTRAL
+  skorKepercayaan Decimal  @map("skor_kepercayaan") @db.Decimal(5, 4)
+  hasilAkhir      String   @map("hasil_akhir") @db.VarChar(32) // BENAR | SALAH | TIDAK_PASTI
+  metadataKonteks Json?    @map("metadata_konteks") @db.JsonB
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp(6)
 
-  klaim            Klaim                 @relation(fields: [klaimId], references: [id], onDelete: Cascade)
-  logKesalahan     LogKesalahanPrediksi[]
-  umpanBalik       UmpanBalik[]
+  klaim        Klaim                  @relation(fields: [klaimId], references: [id], onDelete: Cascade)
+  logKesalahan LogKesalahanPrediksi[]
+  umpanBalik   UmpanBalik[]
 
   @@index([klaimId])
   @@index([hasilAkhir, createdAt])
@@ -141,4 +141,131 @@ model DokumenVektor {
   embedding       Unsupported("vector(1536)")?
 
   @@map("dokumen_vektor")
+}
+
+model Check {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceUrl     String    @default("") @map("source_url") @db.Text
+  normalizedUrl String    @default("") @map("normalized_url") @db.Text
+  inputText     String?   @map("input_text") @db.Text
+  inputType     String    @default("url") @map("input_type") @db.Text
+  platform      String?   @db.Text
+  status        String    @default("queued") @db.Text
+  progressStage String?   @map("progress_stage") @db.Text
+  errorCode     String?   @map("error_code") @db.Text
+  errorMessage  String?   @map("error_message") @db.Text
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  completedAt   DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  mediaAssets    MediaAsset[]
+  transcripts    Transcript[]
+  ocrResults     OcrResult[]
+  analysisResult AnalysisResult?
+  sources        Source[]
+  events         CheckEvent[]
+
+  @@index([normalizedUrl])
+  @@index([createdAt(sort: Desc)])
+  @@index([status])
+  @@map("checks")
+}
+
+model MediaAsset {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkId      String    @map("check_id") @db.Uuid
+  mediaType    String    @map("media_type") @db.Text
+  storageKey   String?   @map("storage_key") @db.Text
+  mimeType     String?   @map("mime_type") @db.Text
+  sizeBytes    BigInt?   @map("size_bytes")
+  durationSec  Decimal?  @map("duration_sec")
+  sha256       String?   @db.Text
+  caption      String?   @db.Text
+  authorHandle String?   @map("author_handle") @db.Text
+  postedAt     DateTime? @map("posted_at") @db.Timestamptz(6)
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
+
+  @@index([checkId])
+  @@map("media_assets")
+}
+
+model Transcript {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkId   String   @map("check_id") @db.Uuid
+  language  String?  @db.Text
+  fullText  String   @map("full_text") @db.Text
+  segments  Json?    @db.JsonB
+  provider  String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
+
+  @@index([checkId])
+  @@map("transcripts")
+}
+
+model OcrResult {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkId      String   @map("check_id") @db.Uuid
+  source       String   @db.Text
+  frameTimeSec Decimal? @map("frame_time_sec")
+  fullText     String   @map("full_text") @db.Text
+  blocks       Json?    @db.JsonB
+  provider     String?  @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
+
+  @@index([checkId])
+  @@map("ocr_results")
+}
+
+model AnalysisResult {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkId      String   @unique @map("check_id") @db.Uuid
+  verdict      String   @db.Text
+  confidence   Decimal? @db.Decimal(5, 4)
+  summary      String?  @db.Text
+  explanation  String   @db.Text
+  claims       Json?    @db.JsonB
+  modelVersion String?  @map("model_version") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
+
+  @@map("analysis_results")
+}
+
+model Source {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkId     String    @map("check_id") @db.Uuid
+  title       String?   @db.Text
+  url         String    @db.Text
+  publisher   String?   @db.Text
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+  snippet     String?   @db.Text
+  stance      String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
+
+  @@index([checkId])
+  @@map("sources")
+}
+
+model CheckEvent {
+  id        Int      @id @default(autoincrement())
+  checkId   String   @map("check_id") @db.Uuid
+  stage     String   @db.Text
+  status    String   @db.Text
+  detail    String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
+
+  @@index([checkId])
+  @@map("check_events")
 }

@@ -5,6 +5,7 @@ import { requestIdMiddleware } from "./middleware/request-id.middleware.js";
 import { notFoundHandler, errorHandler } from "./middleware/error.middleware.js";
 import { verificationRouter } from "./modules/verification/verification.routes.js";
 import { verificationWorker } from "./modules/verification/verification.worker.js";
+import { checksRouter } from "./routes/checks.js";
 import type { ApiResponseSuccess } from "@alitheia/shared-types";
 
 // Inisialisasi worker latar belakang untuk pipeline analisis
@@ -52,6 +53,7 @@ app.get("/api/v1/health", healthHandler);
 app.get("/api/health", healthHandler);
 
 // Domain routers
+app.use(checksRouter);
 app.use("/api/v1/verifications", verificationRouter);
 
 // Catch-all 404 & Global Error Handler
