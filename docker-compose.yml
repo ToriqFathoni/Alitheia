@@ -5,7 +5,7 @@ services:
     container_name: alitheia-postgres
     restart: unless-stopped
     ports:
-      - "5433:5432"
+      - "5431:5432"
     environment:
       POSTGRES_USER: alitheia
       POSTGRES_PASSWORD: alitheia_secret

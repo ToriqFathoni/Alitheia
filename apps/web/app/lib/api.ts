@@ -136,15 +136,29 @@ export interface SubmitCheckResponse {
   error?: string;
 }
 
+function extractErrorMessage(data: unknown, fallback: string): string {
+  if (!data || typeof data !== 'object') return fallback;
+  const d = data as Record<string, unknown>;
+  if (typeof d.message === 'string' && d.message.trim()) return d.message;
+  if (typeof d.error === 'string' && d.error.trim()) return d.error;
+  if (d.error && typeof d.error === 'object') {
+    const errObj = d.error as Record<string, unknown>;
+    if (typeof errObj.message === 'string' && errObj.message.trim()) {
+      return errObj.message;
+    }
+  }
+  return fallback;
+}
+
 export async function submitCheck(url: string, force = false): Promise<SubmitCheckResponse> {
   const res = await fetch(`${API_BASE}/api/v1/checks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url, force }),
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}: Failed to submit check`);
+    throw new Error(extractErrorMessage(data, `HTTP ${res.status}: Failed to submit check`));
   }
   return data;
 }
@@ -155,9 +169,9 @@ export async function submitTextCheck(text: string): Promise<SubmitCheckResponse
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text }),
   });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}: Failed to submit text check`);
+    throw new Error(extractErrorMessage(data, `HTTP ${res.status}: Failed to submit text check`));
   }
   return data;
 }
@@ -166,7 +180,7 @@ export async function getCheck(id: string): Promise<CheckDetail> {
   const res = await fetch(`${API_BASE}/api/v1/checks/${id}`);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Check not found');
+    throw new Error(extractErrorMessage(data, 'Check not found'));
   }
   return res.json();
 }
@@ -187,7 +201,7 @@ export async function listChecks(
   const res = await fetch(`${API_BASE}/api/v1/checks?${query}`);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || 'Failed to fetch checks');
+    throw new Error(extractErrorMessage(data, 'Failed to fetch checks'));
   }
   return res.json();
 }
