@@ -13,16 +13,16 @@ function MiniVerdictBadge({ verdict }: { verdict: string }) {
   let label = verdict;
   let bgClass = "bg-[#F1F5F9] text-[#475569] border-[#CBD5E1]";
 
-  if (norm === "hoax" || norm === "false") {
+  if (norm === "hoax" || norm === "false" || norm === "salah") {
     label = "Hoax";
     bgClass = "bg-[#FFF1F2] text-[#BE123C] border-[#FECDD3]";
-  } else if (norm === "real" || norm === "verified" || norm === "true") {
+  } else if (norm === "real" || norm === "verified" || norm === "true" || norm === "benar") {
     label = "Verified";
     bgClass = "bg-[#ECFDF5] text-[#047857] border-[#A7F3D0]";
   } else if (norm === "misleading") {
     label = "Misleading";
     bgClass = "bg-[#FFFBEB] text-[#B45309] border-[#FDE68A]";
-  } else if (norm === "unverified") {
+  } else if (norm === "unverified" || norm === "tidak_pasti") {
     label = "Unverified";
     bgClass = "bg-[#F8FAFC] text-[#64748B] border-[#E2E8F0]";
   }

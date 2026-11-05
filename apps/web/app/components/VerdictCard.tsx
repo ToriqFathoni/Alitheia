@@ -24,6 +24,7 @@ export default function VerdictCard({ verdict, confidence }: VerdictCardProps) {
   switch (normVerdict) {
     case "hoax":
     case "false":
+    case "salah":
       config = {
         label: "Hoax",
         bgBadge: "bg-[#DC2626]",
@@ -48,6 +49,7 @@ export default function VerdictCard({ verdict, confidence }: VerdictCardProps) {
     case "real":
     case "verified":
     case "true":
+    case "benar":
       config = {
         label: "Verified",
         bgBadge: "bg-[#059669]",
@@ -96,6 +98,7 @@ export default function VerdictCard({ verdict, confidence }: VerdictCardProps) {
       break;
 
     case "unverified":
+    case "tidak_pasti":
     default:
       config = {
         label: normVerdict === "unverified" ? "Unverified" : verdict || "Unverified",

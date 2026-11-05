@@ -174,7 +174,7 @@ function HomeContent() {
 
     if (activeTab === "url") {
       if (!url.trim()) {
-        setError("Please enter a valid social media URL (e.g. TikTok, Instagram, Twitter/X)");
+        setError("Please enter a valid URL (news article, YouTube, Instagram, TikTok, or X)");
         return;
       }
 
@@ -354,11 +354,11 @@ function HomeContent() {
                         handleAnalyze();
                       }
                     }}
-                    placeholder="https://www.tiktok.com/@user/video/... or Instagram / X URL"
+                    placeholder="https://news.detik.com/... or TikTok, Instagram, YouTube, X URL"
                     className="w-full border-0 bg-transparent p-0 text-[13px] text-[#0F172A] outline-none ring-0 placeholder:text-[#94A3B8] focus:outline-none focus:ring-0"
                   />
                   <p className="mt-2 text-[11px] text-[#64748B]">
-                    Enter a link from TikTok, Instagram, or Twitter/X. We&apos;ll download media, extract audio/OCR, and verify claims.
+                    Enter any news article URL or social media link (TikTok, Instagram, YouTube, X). We&apos;ll extract content and verify claims against reliable facts.
                   </p>
                 </div>
               )}

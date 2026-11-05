@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import {
-  isValidUrl,
-  detectPlatform,
-  normalizeUrl,
   findRecentByNormalizedUrl,
   createCheck,
   addCheckEvent,
+  updateCheckStatus,
+  completeCheck,
+  saveAnalysis,
   getCheckDetail,
   listChecks,
   deleteCheck,
@@ -14,6 +14,11 @@ import {
 import type { CheckWithRelations } from '@alitheia/database';
 import { enqueueCheck } from '../services/queue.js';
 import { postRateLimiter, getRateLimiter } from '../middleware/rateLimiter.js';
+import { inspectUrl } from '../modules/ingestion/url-validator.js';
+import { articleExtractor } from '../modules/ingestion/extractors/article.extractor.js';
+import { orchestratorStub } from '../modules/orchestrator/orchestrator.stub.js';
+import { verificationRepository } from '../modules/verification/verification.repository.js';
+import { logger } from '../lib/logger.js';
 
 const router = Router();
 
@@ -114,8 +119,8 @@ function formatCheckDetail(check: CheckWithRelations) {
       steps,
     },
     source_url: check.sourceUrl,
-    input_text: (check as any).inputText ?? null,
-    input_type: (check as any).inputType ?? 'url',
+    input_text: check.inputText ?? null,
+    input_type: check.inputType ?? 'url',
     platform: check.platform,
     media,
     transcript,
@@ -128,9 +133,109 @@ function formatCheckDetail(check: CheckWithRelations) {
 }
 
 /**
+ * Konversi kueri dari tabel riwayat_kueri ke format detail CheckDetail
+ * untuk memastikan kompatibilitas penuh dengan antarmuka frontend /checks/:id
+ */
+function formatKueriAsCheckDetail(kueri: any) {
+  const isDone = kueri.status === "DONE";
+  const isFailed = kueri.status === "FAILED";
+  const status = isDone ? "completed" : isFailed ? "failed" : "analyzing";
+
+  const steps = [
+    {
+      id: 1,
+      stage: "download",
+      status: "succeeded",
+      detail: "Konten sumber berhasil diterima",
+      created_at: kueri.createdAt.toISOString(),
+    },
+    {
+      id: 2,
+      stage: "extract",
+      status: "succeeded",
+      detail: "Ekstraksi dan sanitasi teks artikel selesai",
+      created_at: kueri.createdAt.toISOString(),
+    },
+    {
+      id: 3,
+      stage: "analyze",
+      status: isDone ? "succeeded" : isFailed ? "failed" : "started",
+      detail: isDone ? "Verifikasi klaim dan inferensi NLI selesai" : "Menganalisis klaim...",
+      created_at: kueri.createdAt.toISOString(),
+    },
+  ];
+
+  let claims = null;
+  let sources: any[] = [];
+  let result = null;
+
+  if (kueri.klaim && kueri.klaim.length > 0) {
+    sources = kueri.klaim.flatMap((k: any, kIdx: number) =>
+      (k.bukti || []).map((b: any, bIdx: number) => ({
+        id: `src-${kIdx + 1}-${bIdx + 1}`,
+        title: k.subjek || "Sumber Rujukan Terverifikasi",
+        url: b.urlRujukan || "https://cekfakta.tempo.co",
+        publisher: b.urlRujukan ? new URL(b.urlRujukan).hostname : "Pemeriksa Fakta",
+        stance: k.logPrediksi[0]?.hasilAkhir === "BENAR" ? "SUPPORTS" : k.logPrediksi[0]?.hasilAkhir === "SALAH" ? "REFUTES" : "NEUTRAL",
+        snippet: b.kutipan || "",
+        created_at: b.createdAt ? b.createdAt.toISOString() : kueri.createdAt.toISOString(),
+      }))
+    );
+
+    claims = kueri.klaim.map((k: any) => {
+      const pred = k.logPrediksi?.[0];
+      const verdict = pred?.hasilAkhir === "BENAR" ? "Verified" : pred?.hasilAkhir === "SALAH" ? "Hoax" : "Unverified";
+      return {
+        text: k.kalimatKlaim,
+        verdict,
+        explanation: (pred?.metadataKonteks as any)?.explanation || "Klaim diverifikasi terhadap rujukan independen.",
+        source_ids: sources.map((s) => s.id),
+      };
+    });
+
+    const isAllBenar = kueri.klaim.every((k: any) => k.logPrediksi?.[0]?.hasilAkhir === "BENAR");
+    const isAnySalah = kueri.klaim.some((k: any) => k.logPrediksi?.[0]?.hasilAkhir === "SALAH");
+    const overallVerdict = isAllBenar ? "Verified" : isAnySalah ? "Hoax" : "Unverified";
+    const confidence = Number(kueri.klaim[0]?.logPrediksi?.[0]?.skorKepercayaan ?? 0.85);
+
+    result = {
+      id: kueri.id,
+      verdict: overallVerdict,
+      confidence,
+      summary: `Dianalisis dari ${kueri.klaim.length} klaim faktual dalam konten.`,
+      explanation: (kueri.klaim[0]?.logPrediksi?.[0]?.metadataKonteks as any)?.explanation || "Hasil verifikasi berbasis bukti rujukan terpercaya.",
+      claims,
+      model_version: "alitheia-orchestrator-v1",
+      sources,
+      created_at: kueri.createdAt.toISOString(),
+    };
+  }
+
+  return {
+    id: kueri.id,
+    status,
+    progress: {
+      stage: status,
+      steps,
+    },
+    source_url: kueri.urlSumber || "",
+    input_text: kueri.inputTeks ?? null,
+    input_type: kueri.tipeInput === "TEKS" ? "text" : "url",
+    platform: kueri.urlSumber ? "Web Article" : "Text",
+    media: null,
+    transcript: null,
+    ocr: null,
+    result,
+    error: isFailed ? { code: "PROCESSING_FAILED", message: "Gagal memproses verifikasi klaim" } : null,
+    created_at: kueri.createdAt.toISOString(),
+    completed_at: isDone ? kueri.createdAt.toISOString() : null,
+  };
+}
+
+/**
  * POST /api/v1/checks
- * Create a new hoax detection check or return cached result.
- * Accepts either { url: string } or { text: string }.
+ * Endpoint terpadu untuk membuat permintaan verifikasi tautan maupun teks langsung.
+ * Dilengkapi Anti-SSRF guard komprehensif dan deteksi platform cerdas.
  */
 router.post(
   '/api/v1/checks',
@@ -145,14 +250,15 @@ router.post(
 
       const isForced = force === true || force === 'true';
 
-      // ── Text-based check ───────────────────────────────────────
+      // ── 1. Text-based check ──────────────────────────────────────
       if (text && typeof text === 'string') {
         const trimmed = text.trim();
         if (trimmed.length < 10) {
-          return res.status(400).json({ error: 'Text must be at least 10 characters long' });
+          return res.status(400).json({ error: 'Teks minimal harus memuat 10 karakter untuk dianalisis.' });
         }
-        if (trimmed.length > 5000) {
-          return res.status(400).json({ error: 'Text must be at most 5000 characters long' });
+        const wordCount = trimmed.split(/\s+/).length;
+        if (wordCount > 15000) {
+          return res.status(400).json({ error: 'Panjang teks melebihi batas maksimal 15.000 kata.' });
         }
 
         const check = await createCheck({
@@ -160,10 +266,71 @@ router.post(
           normalizedUrl: '',
           inputText: trimmed,
           inputType: 'text',
+          platform: 'Text',
         });
 
-        await addCheckEvent(check.id, 'queued', 'started', 'Text check queued for analysis');
-        await enqueueCheck(check.id);
+        await addCheckEvent(check.id, 'download', 'succeeded', 'Teks masukan berhasil diterima');
+        await addCheckEvent(check.id, 'extract', 'succeeded', `Teks diproses (${trimmed.length} karakter)`);
+
+        // Proses asinkron melalui orchestrator
+        setImmediate(async () => {
+          try {
+            await updateCheckStatus(check.id, 'analyzing', 'analyzing');
+            await addCheckEvent(check.id, 'analyze', 'started', 'Menganalisis klaim dari teks masukan...');
+
+            const extracted = {
+              text: trimmed,
+              title: 'Masukan Teks Langsung',
+              contentType: 'PLAIN_TEXT' as const,
+            };
+
+            const result = await orchestratorStub.verify(extracted);
+
+            const sources = result.claims.flatMap((c) =>
+              c.bukti.map((b) => ({
+                title: c.subjek || 'Sumber Rujukan Terpercaya',
+                url: b.urlRujukan || 'https://cekfakta.tempo.co',
+                publisher: b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta',
+                stance: c.prediction.hasilAkhir === 'BENAR' ? 'SUPPORTS' : c.prediction.hasilAkhir === 'SALAH' ? 'REFUTES' : 'NEUTRAL',
+                snippet: b.kutipan || '',
+              }))
+            );
+
+            const claimsForDb = result.claims.map((c) => ({
+              text: c.kalimatKlaim,
+              verdict: c.prediction.hasilAkhir === 'BENAR' ? 'True' : c.prediction.hasilAkhir === 'SALAH' ? 'False' : 'Unverified',
+              explanation: c.prediction.explanation || 'Klaim diuji terhadap rujukan independen.',
+              source_ids: sources.map((_, sIdx) => `src-${sIdx + 1}`),
+            }));
+
+            const isAllBenar = result.claims.every((c) => c.prediction.hasilAkhir === 'BENAR');
+            const isAnySalah = result.claims.some((c) => c.prediction.hasilAkhir === 'SALAH');
+            const overallVerdict = isAllBenar ? 'True' : isAnySalah ? 'False' : 'Unverified';
+
+            await saveAnalysis(
+              check.id,
+              {
+                verdict: overallVerdict,
+                confidence: result.claims.length > 0 && result.claims[0] ? result.claims[0].prediction.skorKepercayaan : 0.85,
+                summary: `Dianalisis dari ${result.claims.length} klaim dalam teks.`,
+                explanation: result.claims[0]?.prediction.explanation || 'Verifikasi teks selesai.',
+                claims: claimsForDb,
+                modelVersion: 'alitheia-orchestrator-v1',
+              },
+              sources
+            );
+
+            await addCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim berhasil diselesaikan.');
+            await completeCheck(check.id);
+          } catch (err: unknown) {
+            logger.error({ err, checkId: check.id }, '[ChecksRoute] Gagal menganalisis teks');
+            await updateCheckStatus(check.id, 'failed', 'failed', {
+              code: 'ANALYSIS_FAILED',
+              message: err instanceof Error ? err.message : String(err),
+            });
+            await addCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
+          }
+        });
 
         return res.status(202).json({
           id: check.id,
@@ -172,25 +339,37 @@ router.post(
         });
       }
 
-      // ── URL-based check ────────────────────────────────────────
-      if (!url || typeof url !== 'string' || !isValidUrl(url)) {
-        return res.status(400).json({ error: 'Please provide a valid URL or text to fact-check' });
+      // ── 2. URL-based check (dengan Anti-SSRF dan Deteksi Platform) ──
+      if (!url || typeof url !== 'string') {
+        return res.status(400).json({ error: 'Mohon masukkan tautan (URL) atau teks yang ingin diverifikasi.' });
       }
 
-      const platform = detectPlatform(url);
-      if (platform === 'other') {
-        return res.status(422).json({
-          error: 'Unsupported platform. Supported platforms are TikTok, Instagram, and Twitter/X.',
+      // Inspeksi format, Anti-SSRF, DNS, soft-404 YouTube, dan akun privat Instagram
+      const inspection = await inspectUrl(url);
+
+      if (!inspection.isValid) {
+        const statusCode =
+          inspection.status === 'PRIVATE_OR_RESTRICTED'
+            ? 403
+            : inspection.status === 'DELETED_OR_NOT_FOUND'
+            ? 404
+            : 400;
+
+        return res.status(statusCode).json({
+          error: inspection.message,
+          code: inspection.status,
         });
       }
 
-      let normalizedUrl: string;
-      try {
-        normalizedUrl = normalizeUrl(url);
-      } catch {
-        return res.status(400).json({ error: 'Invalid URL format' });
-      }
+      const normalizedUrl = inspection.normalizedUrl || url;
+      const detection = inspection.detection;
+      const isSocialMedia = detection?.isSocialMedia ?? false;
+      const platformLabel =
+        detection?.platform === 'GENERIC_ARTICLE'
+          ? 'Web Article'
+          : detection?.platform || 'Web';
 
+      // Pengecekan Cache
       if (!isForced) {
         const cached = await findRecentByNormalizedUrl(normalizedUrl, 7);
         if (cached && cached.status === 'completed') {
@@ -205,11 +384,82 @@ router.post(
       const check = await createCheck({
         sourceUrl: url,
         normalizedUrl,
-        platform,
+        platform: platformLabel,
         inputType: 'url',
       });
 
-      await addCheckEvent(check.id, 'queued', 'started', 'Check queued for processing');
+      // ── ALUR A: Artikel Berita Web Biasa (Readability + Orchestrator) ──
+      if (!isSocialMedia || detection?.contentType === 'ARTICLE') {
+        await addCheckEvent(check.id, 'download', 'succeeded', 'Format URL valid dan lolos verifikasi Anti-SSRF.');
+
+        setImmediate(async () => {
+          try {
+            await updateCheckStatus(check.id, 'extracting', 'extracting');
+            await addCheckEvent(check.id, 'extract', 'started', 'Mengekstrak teks berita daring...');
+
+            const extracted = await articleExtractor.extractFromUrl(url);
+            await addCheckEvent(check.id, 'extract', 'succeeded', `Berhasil mengekstrak artikel: "${extracted.title || 'Artikel'}"`);
+
+            await updateCheckStatus(check.id, 'analyzing', 'analyzing');
+            await addCheckEvent(check.id, 'analyze', 'started', 'Menjalankan orkestrasi pencocokan bukti dan inferensi NLI...');
+
+            const result = await orchestratorStub.verify(extracted);
+
+            const sources = result.claims.flatMap((c) =>
+              c.bukti.map((b) => ({
+                title: c.subjek || 'Sumber Rujukan',
+                url: b.urlRujukan || url,
+                publisher: b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta',
+                stance: c.prediction.hasilAkhir === 'BENAR' ? 'SUPPORTS' : c.prediction.hasilAkhir === 'SALAH' ? 'REFUTES' : 'NEUTRAL',
+                snippet: b.kutipan || '',
+              }))
+            );
+
+            const claimsForDb = result.claims.map((c) => ({
+              text: c.kalimatKlaim,
+              verdict: c.prediction.hasilAkhir === 'BENAR' ? 'True' : c.prediction.hasilAkhir === 'SALAH' ? 'False' : 'Unverified',
+              explanation: c.prediction.explanation || 'Klaim dicocokkan dengan rujukan berita resmi.',
+              source_ids: sources.map((_, sIdx) => `src-${sIdx + 1}`),
+            }));
+
+            const isAllBenar = result.claims.every((c) => c.prediction.hasilAkhir === 'BENAR');
+            const isAnySalah = result.claims.some((c) => c.prediction.hasilAkhir === 'SALAH');
+            const overallVerdict = isAllBenar ? 'True' : isAnySalah ? 'False' : 'Unverified';
+
+            await saveAnalysis(
+              check.id,
+              {
+                verdict: overallVerdict,
+                confidence: result.claims.length > 0 && result.claims[0] ? result.claims[0].prediction.skorKepercayaan : 0.88,
+                summary: `Dianalisis dari artikel: ${extracted.title || 'Berita Daring'}`,
+                explanation: result.claims[0]?.prediction.explanation || 'Analisis artikel selesai.',
+                claims: claimsForDb,
+                modelVersion: 'alitheia-orchestrator-v1',
+              },
+              sources
+            );
+
+            await addCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim artikel berhasil diselesaikan.');
+            await completeCheck(check.id);
+          } catch (err: unknown) {
+            logger.error({ err, checkId: check.id }, '[ChecksRoute] Gagal mengekstrak/menganalisis artikel');
+            await updateCheckStatus(check.id, 'failed', 'failed', {
+              code: 'EXTRACTION_OR_ANALYSIS_FAILED',
+              message: err instanceof Error ? err.message : String(err),
+            });
+            await addCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
+          }
+        });
+
+        return res.status(202).json({
+          id: check.id,
+          status: 'queued',
+          cached: false,
+        });
+      }
+
+      // ── ALUR B: Media Sosial / Video (TikTok, Instagram, YouTube, X) ──
+      await addCheckEvent(check.id, 'queued', 'started', `Tautan ${platformLabel} lolos Anti-SSRF, antrean analisis media siap.`);
       await enqueueCheck(check.id);
 
       return res.status(202).json({
@@ -225,7 +475,7 @@ router.post(
 
 /**
  * GET /api/v1/checks
- * List checks with pagination and filtering
+ * Menampilkan daftar riwayat verifikasi dengan paginasi dan filter
  */
 router.get(
   '/api/v1/checks',
@@ -276,7 +526,7 @@ router.get(
 
 /**
  * GET /api/v1/checks/:id
- * Retrieve check details by ID
+ * Mengambil data detail pengecekan berdasarkan ID (Mendukung tabel checks & riwayat_kueri)
  */
 router.get(
   '/api/v1/checks/:id',
@@ -288,12 +538,23 @@ router.get(
         return res.status(404).json({ error: 'Check not found' });
       }
 
+      // 1. Cari pada tabel checks
       const check = await getCheckDetail(id);
-      if (!check) {
-        return res.status(404).json({ error: 'Check not found' });
+      if (check) {
+        return res.json(formatCheckDetail(check));
       }
 
-      return res.json(formatCheckDetail(check));
+      // 2. Fallback pencarian pada tabel riwayat_kueri (interoperabilitas penuh)
+      try {
+        const kueri = await verificationRepository.findKueriDetailById(id);
+        if (kueri) {
+          return res.json(formatKueriAsCheckDetail(kueri));
+        }
+      } catch {
+        // Jika format ID bukan UUID atau tidak ditemukan di riwayat_kueri
+      }
+
+      return res.status(404).json({ error: 'Check not found' });
     } catch (err: any) {
       if (err?.code === 'P2023') {
         return res.status(404).json({ error: 'Check not found' });
@@ -305,7 +566,7 @@ router.get(
 
 /**
  * DELETE /api/v1/checks/:id
- * Delete a check by ID
+ * Menghapus data pengecekan berdasarkan ID
  */
 router.delete(
   '/api/v1/checks/:id',

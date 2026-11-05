@@ -27,6 +27,15 @@ function PlatformBadge({ platform }: { platform?: string | null }) {
   } else if (p === "twitter" || p === "x") {
     bg = "bg-black text-white border-black";
     label = "X / Twitter";
+  } else if (p === "youtube") {
+    bg = "bg-red-50 text-red-700 border-red-200 font-semibold";
+    label = "YouTube";
+  } else if (p.includes("article") || p === "web article" || p === "generic_article") {
+    bg = "bg-blue-50 text-blue-700 border-blue-200 font-semibold";
+    label = "Web Article";
+  } else if (p === "text") {
+    bg = "bg-purple-50 text-purple-700 border-purple-200 font-semibold";
+    label = "Text Input";
   }
 
   return (
