@@ -20,4 +20,5 @@ if (process.env.NODE_ENV !== "production") {
 
 export * from "@prisma/client";
 export * from "./repositories/checks";
+export * from "./repositories/training-data.repository";
 export { normalizeUrl, detectPlatform, isValidUrl } from "./utils/normalizeUrl";

@@ -61,9 +61,21 @@ export const articleExtractor = {
 
       const html = await response.text();
 
-      // Ekstraksi title tag sederhana
+      // Ekstraksi title tag atau OpenGraph title
+      const ogTitleMatch =
+        html.match(/<meta\s+[^>]*property=["'](?:og:title|twitter:title)["'][^>]*content=["']([^"']+)["']/i) ||
+        html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["'](?:og:title|twitter:title)["']/i);
       const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-      const title = titleMatch && titleMatch[1] ? titleMatch[1].trim() : `Artikel dari ${parsedUrl.hostname}`;
+      const rawTitle = ogTitleMatch?.[1] || titleMatch?.[1];
+      const title = rawTitle ? rawTitle.trim() : `Artikel dari ${parsedUrl.hostname}`;
+
+      // Ekstraksi og:description atau meta description (sangat berguna untuk postingan media sosial & berita)
+      const ogDescMatch =
+        html.match(/<meta\s+[^>]*property=["'](?:og:description|twitter:description)["'][^>]*content=["']([^"']+)["']/i) ||
+        html.match(/<meta\s+[^>]*name=["'](?:description|twitter:description)["'][^>]*content=["']([^"']+)["']/i) ||
+        html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["'](?:og:description|twitter:description)["']/i) ||
+        html.match(/<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["'](?:description|twitter:description)["']/i);
+      const ogDesc = ogDescMatch?.[1] ? ogDescMatch[1].trim() : "";
 
       // Hapus tag script, style, dan HTML tags untuk mengambil teks bersih
       const textOnly = html
@@ -71,7 +83,10 @@ export const articleExtractor = {
         .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
         .replace(/<[^>]+>/g, " ");
 
-      const sanitizedText = sanitizeExtractedText(textOnly);
+      let sanitizedText = sanitizeExtractedText(textOnly);
+      if (ogDesc && !sanitizedText.includes(ogDesc)) {
+        sanitizedText = `${ogDesc}\n\n${sanitizedText}`;
+      }
 
       return {
         text: sanitizedText.slice(0, 10000), // Batasi panjang awal
@@ -89,14 +104,15 @@ export const articleExtractor = {
         "[ArticleExtractor] Gagal melakukan fetch HTTP riil, menggunakan fallback konten kontekstual."
       );
 
+      const pathSlug = parsedUrl.pathname.replace(/^\/+/g, "").replace(/\/+$/g, "").replace(/[/-]/g, " ");
       const fallbackText = sanitizeExtractedText(`
-        Konten dari tautan ${url} dianalisis berdasarkan konteks domain ${parsedUrl.hostname}.
+        Konten dari tautan ${url} (${pathSlug || parsedUrl.hostname}) dianalisis berdasarkan konteks domain ${parsedUrl.hostname}.
         Informasi terkait peristiwa ini telah dicatat dalam sistem verifikasi Alitheia untuk diverifikasi silang.
       `);
 
       return {
         text: fallbackText,
-        title: `Artikel ${parsedUrl.hostname}`,
+        title: pathSlug ? `Konten ${parsedUrl.hostname}: ${pathSlug}` : `Artikel ${parsedUrl.hostname}`,
         sourceUrl: url,
         contentType: "ARTICLE",
         metadata: {

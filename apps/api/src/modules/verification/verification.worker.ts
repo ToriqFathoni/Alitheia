@@ -1,7 +1,7 @@
 import { verificationQueue, type VerificationJobPayload } from "../../lib/queue/verification-queue.js";
 import { verificationRepository } from "./verification.repository.js";
 import { articleExtractor } from "../ingestion/extractors/article.extractor.js";
-import { orchestratorStub } from "../orchestrator/orchestrator.stub.js";
+import { orchestratorService } from "../orchestrator/orchestrator.service.js";
 import type { ExtractedContent } from "../orchestrator/orchestrator.types.js";
 import { logger } from "../../lib/logger.js";
 
@@ -28,8 +28,8 @@ export const verificationWorker = {
         throw new Error("Input verifikasi tidak memiliki URL atau teks yang valid.");
       }
 
-      // 3. Eksekusi Orchestrator (Stub pada Langkah 4)
-      const orchestrationResult = await orchestratorStub.verify(extracted);
+      // 3. Eksekusi AI Orchestrator (Gemini -> Fallback 9Router + Few-Shot Training Data + FIFO)
+      const orchestrationResult = await orchestratorService.verify(extracted);
 
       // 4. Persistensi atomik klaim, bukti, dan prediksi ke DB (Status -> DONE)
       await verificationRepository.saveVerificationResults({
