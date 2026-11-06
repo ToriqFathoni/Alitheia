@@ -346,7 +346,13 @@ export class LlmClient {
         throw new Error(`9Router HTTP ${response.status}: ${errorText}`);
       }
 
-      const text = await response.text();
+      let text = "";
+      if (typeof response.text === "function") {
+        text = await response.text();
+      } else if (typeof (response as any).json === "function") {
+        const d = await (response as any).json();
+        text = typeof d === "string" ? d : JSON.stringify(d);
+      }
       let rawText = "";
 
       if (text.trim().startsWith("data:")) {

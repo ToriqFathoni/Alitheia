@@ -21,6 +21,8 @@ export interface ClaimEvidenceItem {
   asalBukti: AsalBukti;
   urlRujukan?: string;
   kutipan?: string;
+  judulRujukan?: string;
+  penerbit?: string;
 }
 
 export interface ClaimPredictionResult {

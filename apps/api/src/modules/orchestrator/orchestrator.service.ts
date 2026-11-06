@@ -13,8 +13,9 @@ import type {
   ClaimEvidenceItem,
   ClaimPredictionResult,
 } from "./orchestrator.types.js";
-import { ensureTrainingDataSeeded } from "./csv-loader.js";
+import { ensureTrainingDataSeeded, findRelevantTrainingExamplesFromCsv } from "./csv-loader.js";
 import { llmClient } from "./llm/llm-client.js";
+import { webSearchClient, type WebSearchResult } from "./retrieval/web-search.client.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 
@@ -67,11 +68,42 @@ Klasifikasi: ${labelText} (Skor Keyakinan: ${ex.skorKepercayaan.toFixed(2)})`;
   }
 
   /**
+   * Memformat daftar hasil pencarian web real-time menjadi teks ringkasan untuk prompt LLM.
+   */
+  private formatWebSearchResults(results: WebSearchResult[]): string {
+    if (results.length === 0) {
+      return "Tidak ditemukan artikel berita terkini yang relevan dari pencarian web.";
+    }
+
+    return results
+      .map((item, idx) => {
+        return `[Hasil Web #${idx + 1}]
+Judul: ${item.title}
+Sumber/Penerbit: ${item.publisher} (${item.publishedAt || "Terkini"})
+Tautan: ${item.url}
+Ringkasan: ${item.snippet}`;
+      })
+      .join("\n\n");
+  }
+
+  /**
+   * Mendapatkan tanggal hari ini dalam format bahasa Indonesia (misal: "6 November 2026").
+   */
+  private getCurrentDateFormatted(): string {
+    const now = new Date();
+    const months = [
+      "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+      "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+    ];
+    return `${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+  }
+
+  /**
    * Eksekusi pipeline verifikasi AI:
    * 1. Cek & pastikan data latih awal sudah di-seed.
-   * 2. Ambil contoh Few-Shot yang paling relevan dari database.
+   * 2. Ambil contoh Few-Shot dari DB dan Pencarian Berita Web Terkini secara paralel.
    * 3. Panggil LLM API (Gemini -> fallback 9Router).
-   * 4. Bentuk hasil verifikasi probabilistik dan bukti rujukan.
+   * 4. Bentuk hasil verifikasi probabilistik dan bukti rujukan nyata.
    * 5. Simpan output ke database sebagai data latih baru dengan antrean FIFO (maks. 5.000 baris).
    */
   async verify(content: ExtractedContent): Promise<VerificationResult> {
@@ -85,18 +117,38 @@ Klasifikasi: ${labelText} (Skor Keyakinan: ${ex.skorKepercayaan.toFixed(2)})`;
       this.seedChecked = true;
     }
 
-    // 2. Ambil contoh Few-Shot terdekat dari database
+    // 2. Ambil contoh Few-Shot DB & Hasil Pencarian Web Terkini secara paralel
     let fewShotExamples: TrainingDataExample[] = [];
-    try {
-      fewShotExamples = await findRelevantTrainingExamples(rawText, 8);
-    } catch (dbError) {
-      logger.warn({ dbError }, "[OrchestratorService] Gagal mengambil contoh few-shot dari DB. Lanjut tanpa RAG.");
+    let webResults: WebSearchResult[] = [];
+
+    const [dbPromise, webPromise] = await Promise.allSettled([
+      findRelevantTrainingExamples(rawText, 8),
+      webSearchClient.search(title, rawText, 6),
+    ]);
+
+    if (dbPromise.status === "fulfilled") {
+      fewShotExamples = dbPromise.value;
+    } else {
+      logger.info("[OrchestratorService] Database PostgreSQL offline. Mengambil contoh Few-Shot langsung dari memori Data_latih.csv.");
+      fewShotExamples = findRelevantTrainingExamplesFromCsv(rawText, 8);
+    }
+
+    if (webPromise.status === "fulfilled") {
+      webResults = webPromise.value;
+      logger.info({ totalHits: webResults.length }, "[OrchestratorService] Berhasil mengambil hasil pencarian web real-time.");
+    } else {
+      logger.warn({ err: webPromise.reason }, "[OrchestratorService] Pencarian web gagal, lanjut tanpa web retrieval.");
     }
 
     // 3. Susun prompt dengan template
     const template = this.getPromptTemplate();
     const formattedExamples = this.formatFewShotExamples(fewShotExamples);
+    const formattedWeb = this.formatWebSearchResults(webResults);
+    const currentDate = this.getCurrentDateFormatted();
+
     const finalPrompt = template
+      .replace("{{CURRENT_DATE}}", currentDate)
+      .replace("{{WEB_SEARCH_RESULTS}}", formattedWeb)
       .replace("{{FEW_SHOT_EXAMPLES}}", formattedExamples)
       .replace("{{INPUT_TITLE}}", title)
       .replace("{{INPUT_TEXT}}", rawText);
@@ -118,25 +170,40 @@ Klasifikasi: ${labelText} (Skor Keyakinan: ${ex.skorKepercayaan.toFixed(2)})`;
     // 5. Susun bukti rujukan (Evidence)
     const evidenceList: ClaimEvidenceItem[] = [];
 
+    // Prioritaskan artikel dari Web Search Terkini
+    for (const item of webResults.slice(0, 4)) {
+      evidenceList.push({
+        asalBukti: "WEB_SEARCH",
+        urlRujukan: item.url,
+        judulRujukan: item.title,
+        penerbit: item.publisher,
+        kutipan: item.snippet,
+      });
+    }
+
     // Tambahkan referensi dari data latih DB yang selaras
-    for (const ex of fewShotExamples.slice(0, 3)) {
+    for (const ex of fewShotExamples.slice(0, 2)) {
       evidenceList.push({
         asalBukti: "VECTOR_DB",
         urlRujukan: content.sourceUrl || "https://alitheia.internal/knowledge-base",
-        kutipan: `[Basis Pengetahuan #${ex.id.slice(0, 8)}] Judul: "${ex.judul}" — Diverifikasi sebagai ${
-          ex.label === 1 ? "Hoax" : "Fakta"
-        }.`,
+        judulRujukan: `Basis Pengetahuan #${ex.id.slice(0, 8)}: ${ex.judul}`,
+        penerbit: "Arsip Data Latih Alitheia",
+        kutipan: `Diverifikasi sebagai ${ex.label === 1 ? "Hoax (Salah)" : "Fakta (Benar)"}. ${ex.narasi.slice(0, 200)}...`,
       });
     }
 
     // Tambahkan sumber yang disarankan oleh LLM
     if (llmOutput.suggestedSources && llmOutput.suggestedSources.length > 0) {
       for (const src of llmOutput.suggestedSources) {
-        evidenceList.push({
-          asalBukti: "FACT_CHECK_API",
-          urlRujukan: src.url || content.sourceUrl || "https://cekfakta.tempo.co",
-          kutipan: src.snippet || src.title || "Klarifikasi dan rujukan silang berita.",
-        });
+        if (src.url && !evidenceList.some((e) => e.urlRujukan === src.url)) {
+          evidenceList.push({
+            asalBukti: "FACT_CHECK_API",
+            urlRujukan: src.url,
+            judulRujukan: src.title || "Klarifikasi Pemeriksa Fakta",
+            penerbit: src.url ? new URL(src.url).hostname : "Pemeriksa Fakta",
+            kutipan: src.snippet || src.title || "Klarifikasi dan rujukan silang berita.",
+          });
+        }
       }
     }
 
@@ -212,30 +279,32 @@ Klasifikasi: ${labelText} (Skor Keyakinan: ${ex.skorKepercayaan.toFixed(2)})`;
       });
     }
 
-    // 7. Masukkan output ke database sebagai data latih baru dengan aturan FIFO (maks. 5.000 baris)
-    try {
-      const savedTraining = await insertTrainingDataFifo(
-        {
-          judul: title.slice(0, 300),
-          narasi: rawText,
-          label: llmOutput.label,
-          asalData: "PREDIKSI_LLM",
-          skorKepercayaan: confidenceScore,
-        },
-        env.MAX_TRAINING_DATA_ROWS
-      );
+    // 7. Masukkan output ke database sebagai data latih baru dengan aturan FIFO (hanya jika inferensi LLM berhasil)
+    if (meta.provider !== "fallback-rule") {
+      try {
+        const savedTraining = await insertTrainingDataFifo(
+          {
+            judul: title.slice(0, 300),
+            narasi: rawText,
+            label: llmOutput.label,
+            asalData: "PREDIKSI_LLM",
+            skorKepercayaan: confidenceScore,
+          },
+          env.MAX_TRAINING_DATA_ROWS
+        );
 
-      logger.info(
-        {
-          trainingId: savedTraining.id,
-          seqId: savedTraining.seqId,
-          label: savedTraining.label,
-          maxCapacity: env.MAX_TRAINING_DATA_ROWS,
-        },
-        "[OrchestratorService] Output verifikasi berhasil dimasukkan ke tabel data_latih_berita dengan mekanisme FIFO."
-      );
-    } catch (saveError) {
-      logger.error({ saveError }, "[OrchestratorService] Gagal menyimpan output ke tabel data_latih_berita.");
+        logger.info(
+          {
+            trainingId: savedTraining.id,
+            seqId: savedTraining.seqId,
+            label: savedTraining.label,
+            maxCapacity: env.MAX_TRAINING_DATA_ROWS,
+          },
+          "[OrchestratorService] Output verifikasi berhasil dimasukkan ke tabel data_latih_berita dengan mekanisme FIFO."
+        );
+      } catch (saveError) {
+        logger.error({ saveError }, "[OrchestratorService] Gagal menyimpan output ke tabel data_latih_berita.");
+      }
     }
 
     return {

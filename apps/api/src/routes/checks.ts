@@ -412,9 +412,9 @@ router.post(
 
             const sources = result.claims.flatMap((c) =>
               c.bukti.map((b) => ({
-                title: c.subjek || 'Sumber Rujukan Terpercaya',
+                title: b.judulRujukan || c.subjek || 'Sumber Rujukan Terpercaya',
                 url: b.urlRujukan || 'https://cekfakta.tempo.co',
-                publisher: b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta',
+                publisher: b.penerbit || (b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta'),
                 stance: c.prediction.hasilAkhir === 'BENAR' ? 'SUPPORTS' : c.prediction.hasilAkhir === 'SALAH' ? 'REFUTES' : 'NEUTRAL',
                 snippet: b.kutipan || '',
               }))
@@ -531,9 +531,9 @@ router.post(
 
             const sources = result.claims.flatMap((c) =>
               c.bukti.map((b) => ({
-                title: c.subjek || 'Sumber Rujukan',
+                title: b.judulRujukan || c.subjek || 'Sumber Rujukan',
                 url: b.urlRujukan || url,
-                publisher: b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta',
+                publisher: b.penerbit || (b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta'),
                 stance: c.prediction.hasilAkhir === 'BENAR' ? 'SUPPORTS' : c.prediction.hasilAkhir === 'SALAH' ? 'REFUTES' : 'NEUTRAL',
                 snippet: b.kutipan || '',
               }))
