@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 import { app } from "../../../app.js";
 import { verificationRepository } from "../verification.repository.js";
+import { orchestratorService } from "../../orchestrator/orchestrator.service.js";
 import { randomUUID } from "node:crypto";
 
 describe("Verification Pipeline Integration Tests (SCRUM-62)", () => {
@@ -89,6 +90,33 @@ describe("Verification Pipeline Integration Tests (SCRUM-62)", () => {
       const item = dbStore.get(id);
       return (item as any) || null;
     });
+
+    vi.spyOn(orchestratorService, "verify").mockResolvedValue({
+      credibilityScore: 0.88,
+      claims: [
+        {
+          kalimatKlaim: "Eastbridge electric bus pilot cut average commute times by 20%",
+          subjek: "Eastbridge",
+          tindakan: "cut",
+          objek: "commute times",
+          posisiAwal: 0,
+          posisiAkhir: 60,
+          prediction: {
+            labelNli: "ENTAILMENT",
+            skorKepercayaan: 0.94,
+            hasilAkhir: "BENAR",
+            explanation: "Klaim didukung bukti faktual.",
+          },
+          bukti: [
+            {
+              asalBukti: "FACT_CHECK_API",
+              urlRujukan: "https://example.com/rujukan",
+              kutipan: "Fakta resmi menyatakan klaim benar.",
+            },
+          ],
+        },
+      ],
+    });
   });
 
   describe("POST /api/v1/verifications (Submit Link)", () => {
@@ -164,11 +192,13 @@ describe("Verification Pipeline Integration Tests (SCRUM-62)", () => {
       expect(postRes.status).toBe(202);
       const { verificationId, pollUrl } = postRes.body.data;
 
-      // 2. Tunggu worker asinkron menyelesaikan tugas di microtask / event loop
-      await new Promise((resolve) => setTimeout(resolve, 80));
-
-      // 3. Polling hasil verifikasi
-      const getRes = await request(app).get(pollUrl);
+      // 2. Polling hingga worker asinkron menyelesaikan tugas
+      let getRes = await request(app).get(pollUrl);
+      const pollStart = Date.now();
+      while (getRes.body.data.status === "PROCESSING" && Date.now() - pollStart < 3000) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        getRes = await request(app).get(pollUrl);
+      }
 
       expect(getRes.status).toBe(200);
       expect(getRes.body.success).toBe(true);

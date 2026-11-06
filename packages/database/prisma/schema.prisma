@@ -143,6 +143,24 @@ model DokumenVektor {
   @@map("dokumen_vektor")
 }
 
+model DataLatihBerita {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  seqId           Int      @unique @default(autoincrement()) @map("seq_id")
+  externalId      String?  @map("external_id") @db.VarChar(64)
+  label           Int      @db.SmallInt
+  tanggal         String?  @db.VarChar(64)
+  judul           String   @db.Text
+  narasi          String   @db.Text
+  namaFileGambar  String?  @map("nama_file_gambar") @db.VarChar(255)
+  asalData        String   @default("CSV_AWAL") @map("asal_data") @db.VarChar(32)
+  skorKepercayaan Decimal  @default(1.0000) @map("skor_kepercayaan") @db.Decimal(5, 4)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@index([createdAt(sort: Asc), seqId(sort: Asc)])
+  @@index([label])
+  @@map("data_latih_berita")
+}
+
 model Check {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   sourceUrl     String    @default("") @map("source_url") @db.Text

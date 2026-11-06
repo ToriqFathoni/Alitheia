@@ -16,9 +16,133 @@ import { enqueueCheck } from '../services/queue.js';
 import { postRateLimiter, getRateLimiter } from '../middleware/rateLimiter.js';
 import { inspectUrl } from '../modules/ingestion/url-validator.js';
 import { articleExtractor } from '../modules/ingestion/extractors/article.extractor.js';
-import { orchestratorStub } from '../modules/orchestrator/orchestrator.stub.js';
+import { orchestratorService } from '../modules/orchestrator/orchestrator.service.js';
 import { verificationRepository } from '../modules/verification/verification.repository.js';
 import { logger } from '../lib/logger.js';
+
+import { randomUUID } from 'node:crypto';
+
+const inMemoryChecks = new Map<string, any>();
+
+async function safeCreateCheck(data: {
+  sourceUrl: string;
+  normalizedUrl: string;
+  platform?: string | null;
+  inputText?: string | null;
+  inputType?: string;
+}): Promise<any> {
+  try {
+    return await createCheck(data);
+  } catch (err: any) {
+    logger.warn({ error: err?.message }, '[ChecksRoute] Database offline, menggunakan in-memory check store.');
+    const id = randomUUID();
+    const item = {
+      id,
+      sourceUrl: data.sourceUrl,
+      normalizedUrl: data.normalizedUrl,
+      platform: data.platform ?? null,
+      inputText: data.inputText ?? null,
+      inputType: data.inputType ?? 'url',
+      status: 'queued',
+      progressStage: 'init',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      completedAt: null,
+      events: [],
+      mediaAssets: [],
+      transcripts: [],
+      ocrResults: [],
+      sources: [],
+      analysisResult: null,
+      errorCode: null,
+      errorMessage: null,
+    };
+    inMemoryChecks.set(id, item);
+    return item;
+  }
+}
+
+async function safeAddCheckEvent(checkId: string, stage: string, status: string, detail?: string): Promise<any> {
+  try {
+    return await addCheckEvent(checkId, stage, status, detail);
+  } catch {
+    const item = inMemoryChecks.get(checkId);
+    if (item) {
+      item.events.push({
+        id: item.events.length + 1,
+        stage,
+        status,
+        detail: detail || '',
+        createdAt: new Date(),
+      });
+    }
+    return 1;
+  }
+}
+
+async function safeUpdateCheckStatus(checkId: string, status: string, progressStage?: string, error?: { code: string; message: string }): Promise<void> {
+  try {
+    await updateCheckStatus(checkId, status, progressStage, error);
+  } catch {
+    const item = inMemoryChecks.get(checkId);
+    if (item) {
+      item.status = status;
+      if (progressStage) item.progressStage = progressStage;
+      if (error) {
+        item.errorCode = error.code;
+        item.errorMessage = error.message;
+      }
+      item.updatedAt = new Date();
+    }
+  }
+}
+
+async function safeSaveAnalysis(checkId: string, analysis: any, sources: any[]): Promise<any> {
+  try {
+    return await saveAnalysis(checkId, analysis, sources);
+  } catch {
+    const item = inMemoryChecks.get(checkId);
+    if (item) {
+      item.analysisResult = {
+        id: randomUUID(),
+        checkId,
+        verdict: analysis.verdict,
+        confidence: analysis.confidence,
+        summary: analysis.summary,
+        explanation: analysis.explanation,
+        claims: analysis.claims,
+        modelVersion: analysis.modelVersion,
+        createdAt: new Date(),
+      };
+      item.sources = sources.map((s, idx) => ({
+        id: `src-${idx + 1}`,
+        checkId,
+        title: s.title,
+        url: s.url,
+        publisher: s.publisher,
+        publishedAt: null,
+        snippet: s.snippet,
+        stance: s.stance,
+        createdAt: new Date(),
+      }));
+    }
+    return null;
+  }
+}
+
+async function safeCompleteCheck(checkId: string): Promise<void> {
+  try {
+    await completeCheck(checkId);
+  } catch {
+    const item = inMemoryChecks.get(checkId);
+    if (item) {
+      item.status = 'completed';
+      item.progressStage = 'done';
+      item.completedAt = new Date();
+      item.updatedAt = new Date();
+    }
+  }
+}
 
 const router = Router();
 
@@ -261,7 +385,7 @@ router.post(
           return res.status(400).json({ error: 'Panjang teks melebihi batas maksimal 15.000 kata.' });
         }
 
-        const check = await createCheck({
+        const check = await safeCreateCheck({
           sourceUrl: '',
           normalizedUrl: '',
           inputText: trimmed,
@@ -269,14 +393,14 @@ router.post(
           platform: 'Text',
         });
 
-        await addCheckEvent(check.id, 'download', 'succeeded', 'Teks masukan berhasil diterima');
-        await addCheckEvent(check.id, 'extract', 'succeeded', `Teks diproses (${trimmed.length} karakter)`);
+        await safeAddCheckEvent(check.id, 'download', 'succeeded', 'Teks masukan berhasil diterima');
+        await safeAddCheckEvent(check.id, 'extract', 'succeeded', `Teks diproses (${trimmed.length} karakter)`);
 
         // Proses asinkron melalui orchestrator
         setImmediate(async () => {
           try {
-            await updateCheckStatus(check.id, 'analyzing', 'analyzing');
-            await addCheckEvent(check.id, 'analyze', 'started', 'Menganalisis klaim dari teks masukan...');
+            await safeUpdateCheckStatus(check.id, 'analyzing', 'analyzing');
+            await safeAddCheckEvent(check.id, 'analyze', 'started', 'Menganalisis klaim dari teks masukan...');
 
             const extracted = {
               text: trimmed,
@@ -284,7 +408,7 @@ router.post(
               contentType: 'PLAIN_TEXT' as const,
             };
 
-            const result = await orchestratorStub.verify(extracted);
+            const result = await orchestratorService.verify(extracted);
 
             const sources = result.claims.flatMap((c) =>
               c.bukti.map((b) => ({
@@ -307,7 +431,7 @@ router.post(
             const isAnySalah = result.claims.some((c) => c.prediction.hasilAkhir === 'SALAH');
             const overallVerdict = isAllBenar ? 'True' : isAnySalah ? 'False' : 'Unverified';
 
-            await saveAnalysis(
+            await safeSaveAnalysis(
               check.id,
               {
                 verdict: overallVerdict,
@@ -320,15 +444,15 @@ router.post(
               sources
             );
 
-            await addCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim berhasil diselesaikan.');
-            await completeCheck(check.id);
+            await safeAddCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim berhasil diselesaikan.');
+            await safeCompleteCheck(check.id);
           } catch (err: unknown) {
             logger.error({ err, checkId: check.id }, '[ChecksRoute] Gagal menganalisis teks');
-            await updateCheckStatus(check.id, 'failed', 'failed', {
+            await safeUpdateCheckStatus(check.id, 'failed', 'failed', {
               code: 'ANALYSIS_FAILED',
               message: err instanceof Error ? err.message : String(err),
             });
-            await addCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
+            await safeAddCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
           }
         });
 
@@ -381,7 +505,7 @@ router.post(
         }
       }
 
-      const check = await createCheck({
+      const check = await safeCreateCheck({
         sourceUrl: url,
         normalizedUrl,
         platform: platformLabel,
@@ -390,20 +514,20 @@ router.post(
 
       // ── ALUR A: Artikel Berita Web Biasa (Readability + Orchestrator) ──
       if (!isSocialMedia || detection?.contentType === 'ARTICLE') {
-        await addCheckEvent(check.id, 'download', 'succeeded', 'Format URL valid dan lolos verifikasi Anti-SSRF.');
+        await safeAddCheckEvent(check.id, 'download', 'succeeded', 'Format URL valid dan lolos verifikasi Anti-SSRF.');
 
         setImmediate(async () => {
           try {
-            await updateCheckStatus(check.id, 'extracting', 'extracting');
-            await addCheckEvent(check.id, 'extract', 'started', 'Mengekstrak teks berita daring...');
+            await safeUpdateCheckStatus(check.id, 'extracting', 'extracting');
+            await safeAddCheckEvent(check.id, 'extract', 'started', 'Mengekstrak teks berita daring...');
 
             const extracted = await articleExtractor.extractFromUrl(url);
-            await addCheckEvent(check.id, 'extract', 'succeeded', `Berhasil mengekstrak artikel: "${extracted.title || 'Artikel'}"`);
+            await safeAddCheckEvent(check.id, 'extract', 'succeeded', `Berhasil mengekstrak artikel: "${extracted.title || 'Artikel'}"`);
 
-            await updateCheckStatus(check.id, 'analyzing', 'analyzing');
-            await addCheckEvent(check.id, 'analyze', 'started', 'Menjalankan orkestrasi pencocokan bukti dan inferensi NLI...');
+            await safeUpdateCheckStatus(check.id, 'analyzing', 'analyzing');
+            await safeAddCheckEvent(check.id, 'analyze', 'started', 'Menjalankan orkestrasi pencocokan bukti dan inferensi NLI...');
 
-            const result = await orchestratorStub.verify(extracted);
+            const result = await orchestratorService.verify(extracted);
 
             const sources = result.claims.flatMap((c) =>
               c.bukti.map((b) => ({
@@ -426,7 +550,7 @@ router.post(
             const isAnySalah = result.claims.some((c) => c.prediction.hasilAkhir === 'SALAH');
             const overallVerdict = isAllBenar ? 'True' : isAnySalah ? 'False' : 'Unverified';
 
-            await saveAnalysis(
+            await safeSaveAnalysis(
               check.id,
               {
                 verdict: overallVerdict,
@@ -439,15 +563,15 @@ router.post(
               sources
             );
 
-            await addCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim artikel berhasil diselesaikan.');
-            await completeCheck(check.id);
+            await safeAddCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim artikel berhasil diselesaikan.');
+            await safeCompleteCheck(check.id);
           } catch (err: unknown) {
             logger.error({ err, checkId: check.id }, '[ChecksRoute] Gagal mengekstrak/menganalisis artikel');
-            await updateCheckStatus(check.id, 'failed', 'failed', {
+            await safeUpdateCheckStatus(check.id, 'failed', 'failed', {
               code: 'EXTRACTION_OR_ANALYSIS_FAILED',
               message: err instanceof Error ? err.message : String(err),
             });
-            await addCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
+            await safeAddCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
           }
         });
 
@@ -492,16 +616,25 @@ router.get(
         typeof req.query.platform === 'string' ? req.query.platform : undefined;
       const q = typeof req.query.q === 'string' ? req.query.q : undefined;
 
-      const result = await listChecks({
-        page: Number.isInteger(page) && page > 0 ? page : 1,
-        pageSize: Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 10,
-        verdict,
-        platform,
-        q,
-      });
+      let listData: any[] = [];
+      let total = 0;
+      try {
+        const result = await listChecks({
+          page: Number.isInteger(page) && page > 0 ? page : 1,
+          pageSize: Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 10,
+          verdict,
+          platform,
+          q,
+        });
+        listData = result.data;
+        total = result.total;
+      } catch {
+        listData = Array.from(inMemoryChecks.values());
+        total = listData.length;
+      }
 
       return res.json({
-        data: result.data.map((c) => ({
+        data: listData.map((c) => ({
           id: c.id,
           source_url: c.sourceUrl,
           normalized_url: c.normalizedUrl,
@@ -515,13 +648,13 @@ router.get(
           verdict: c.analysisResult?.verdict ?? null,
           error_code: c.errorCode,
           error_message: c.errorMessage,
-          created_at: c.createdAt.toISOString(),
-          updated_at: c.updatedAt.toISOString(),
-          completed_at: c.completedAt ? c.completedAt.toISOString() : null,
+          created_at: c.createdAt instanceof Date ? c.createdAt.toISOString() : String(c.createdAt),
+          updated_at: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : String(c.updatedAt),
+          completed_at: c.completedAt ? (c.completedAt instanceof Date ? c.completedAt.toISOString() : String(c.completedAt)) : null,
         })),
-        total: result.total,
-        page: result.page,
-        page_size: result.pageSize,
+        total,
+        page,
+        page_size: pageSize,
       });
     } catch (err) {
       return next(err);
@@ -544,9 +677,19 @@ router.get(
       }
 
       // 1. Cari pada tabel checks
-      const check = await getCheckDetail(id);
-      if (check) {
-        return res.json(formatCheckDetail(check));
+      try {
+        const check = await getCheckDetail(id);
+        if (check) {
+          return res.json(formatCheckDetail(check));
+        }
+      } catch {
+        // Abaikan jika DB offline
+      }
+
+      // Check in-memory store jika database offline
+      const memCheck = inMemoryChecks.get(id);
+      if (memCheck) {
+        return res.json(formatCheckDetail(memCheck));
       }
 
       // 2. Fallback pencarian pada tabel riwayat_kueri (interoperabilitas penuh)

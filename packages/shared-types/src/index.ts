@@ -144,3 +144,51 @@ export const VerificationDetailDataSchema = z.object({
 });
 
 export type VerificationDetailDataDTO = z.infer<typeof VerificationDetailDataSchema>;
+
+/* -------------------------------------------------------------------------- */
+/*  5. LLM API Output & Training Data Schemas                                 */
+/* -------------------------------------------------------------------------- */
+export const LlmClaimDetailSchema = z.object({
+  claim: z.string(),
+  verdict: HasilAkhirEnum,
+  confidence: z.number().min(0).max(1),
+  explanation: z.string(),
+  subject: z.string().optional(),
+  action: z.string().optional(),
+  object: z.string().optional(),
+});
+export type LlmClaimDetailDTO = z.infer<typeof LlmClaimDetailSchema>;
+
+export const LlmVerificationOutputSchema = z.object({
+  label: z.union([z.literal(0), z.literal(1)]), // 1 = Hoax (SALAH), 0 = Fakta (BENAR)
+  confidence: z.number().min(0).max(1),
+  explanation: z.string(),
+  claims: z.array(LlmClaimDetailSchema).default([]),
+  suggestedSources: z
+    .array(
+      z.object({
+        title: z.string().optional(),
+        url: z.string().optional(),
+        snippet: z.string().optional(),
+      })
+    )
+    .optional()
+    .default([]),
+});
+export type LlmVerificationOutputDTO = z.infer<typeof LlmVerificationOutputSchema>;
+
+export const TrainingDataItemSchema = z.object({
+  id: z.string(),
+  seqId: z.number().int().optional(),
+  externalId: z.string().nullable().optional(),
+  label: z.number().int(),
+  tanggal: z.string().nullable().optional(),
+  judul: z.string(),
+  narasi: z.string(),
+  namaFileGambar: z.string().nullable().optional(),
+  asalData: z.string(),
+  skorKepercayaan: z.number(),
+  createdAt: z.string().optional(),
+});
+export type TrainingDataItemDTO = z.infer<typeof TrainingDataItemSchema>;
+
