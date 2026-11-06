@@ -131,6 +131,46 @@ describe("Checks API Endpoints (POST/GET /api/v1/checks)", () => {
       expect(res.body.id).toBe(mockId);
       expect(res.body.status).toBe("queued");
     });
+
+    it("tetap menerima tautan dan mengembalikan 202 meskipun database server offline (P1001)", async () => {
+      vi.mocked(dbRepo.findRecentByNormalizedUrl).mockRejectedValue(
+        new Error("Can't reach database server at localhost:5433")
+      );
+      vi.mocked(dbRepo.createCheck).mockRejectedValue(
+        new Error("Can't reach database server at localhost:5433")
+      );
+      vi.mocked(dbRepo.addCheckEvent).mockRejectedValue(
+        new Error("Can't reach database server at localhost:5433")
+      );
+
+      const res = await request(app)
+        .post("/api/v1/checks")
+        .send({ url: "https://news.detik.com/berita/d-123456/fakta-klarifikasi" });
+
+      expect(res.status).toBe(202);
+      expect(res.body.status).toBe("queued");
+      expect(typeof res.body.id).toBe("string");
+    });
+
+    it("menerima tautan media sosial (Instagram) dan mengembalikan 202 tanpa error 500", async () => {
+      vi.mocked(dbRepo.findRecentByNormalizedUrl).mockRejectedValue(
+        new Error("Can't reach database server at localhost:5433")
+      );
+      vi.mocked(dbRepo.createCheck).mockRejectedValue(
+        new Error("Can't reach database server at localhost:5433")
+      );
+      vi.mocked(dbRepo.addCheckEvent).mockRejectedValue(
+        new Error("Can't reach database server at localhost:5433")
+      );
+
+      const res = await request(app)
+        .post("/api/v1/checks")
+        .send({ url: "https://www.instagram.com/p/DfGajTlicw9/?img_index=1" });
+
+      expect(res.status).toBe(202);
+      expect(res.body.status).toBe("queued");
+      expect(typeof res.body.id).toBe("string");
+    });
   });
 
   describe("GET /api/v1/checks/:id", () => {

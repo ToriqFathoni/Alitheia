@@ -518,13 +518,17 @@ router.post(
 
       // Pengecekan Cache
       if (!isForced) {
-        const cached = await findRecentByNormalizedUrl(normalizedUrl, 7);
-        if (cached && cached.status === 'completed') {
-          return res.status(200).json({
-            id: cached.id,
-            status: 'completed',
-            cached: true,
-          });
+        try {
+          const cached = await findRecentByNormalizedUrl(normalizedUrl, 7);
+          if (cached && cached.status === 'completed') {
+            return res.status(200).json({
+              id: cached.id,
+              status: 'completed',
+              cached: true,
+            });
+          }
+        } catch {
+          // Abaikan jika database offline
         }
       }
 
@@ -535,83 +539,119 @@ router.post(
         inputType: 'url',
       });
 
-      // ── ALUR A: Artikel Berita Web Biasa (Readability + Orchestrator) ──
-      if (!isSocialMedia || detection?.contentType === 'ARTICLE') {
-        await safeAddCheckEvent(check.id, 'download', 'succeeded', 'Format URL valid dan lolos verifikasi Anti-SSRF.');
+      // Catat event validasi Anti-SSRF lolos
+      await safeAddCheckEvent(
+        check.id,
+        'download',
+        'succeeded',
+        `Format URL ${platformLabel} valid dan lolos verifikasi Anti-SSRF.`
+      );
 
-        setImmediate(async () => {
-          try {
-            await safeUpdateCheckStatus(check.id, 'extracting', 'extracting');
-            await safeAddCheckEvent(check.id, 'extract', 'started', 'Mengekstrak teks berita daring...');
-
-            const extracted = await articleExtractor.extractFromUrl(url);
-            await safeAddCheckEvent(check.id, 'extract', 'succeeded', `Berhasil mengekstrak artikel: "${extracted.title || 'Artikel'}"`);
-
-            await safeUpdateCheckStatus(check.id, 'analyzing', 'analyzing');
-            await safeAddCheckEvent(check.id, 'analyze', 'started', 'Menjalankan orkestrasi pencocokan bukti dan inferensi NLI...');
-
-            const result = await orchestratorService.verify(extracted);
-
-            const sources = result.claims.flatMap((c) =>
-              c.bukti.map((b) => ({
-                title: b.judulRujukan || c.subjek || 'Sumber Rujukan',
-                url: b.urlRujukan || url,
-                publisher: b.penerbit || (b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta'),
-                stance: determineSourceStance(
-                  b.judulRujukan || '',
-                  b.kutipan || '',
-                  c.prediction.hasilAkhir
-                ),
-                snippet: b.kutipan || '',
-              }))
-            );
-
-            const claimsForDb = result.claims.map((c) => ({
-              text: c.kalimatKlaim,
-              verdict: c.prediction.hasilAkhir === 'BENAR' ? 'True' : c.prediction.hasilAkhir === 'SALAH' ? 'False' : 'Unverified',
-              explanation: c.prediction.explanation || 'Klaim dicocokkan dengan rujukan berita resmi.',
-              source_ids: sources.map((_, sIdx) => `src-${sIdx + 1}`),
-            }));
-
-            const isAllBenar = result.claims.every((c) => c.prediction.hasilAkhir === 'BENAR');
-            const isAnySalah = result.claims.some((c) => c.prediction.hasilAkhir === 'SALAH');
-            const overallVerdict = isAllBenar ? 'True' : isAnySalah ? 'False' : 'Unverified';
-
-            await safeSaveAnalysis(
-              check.id,
-              {
-                verdict: overallVerdict,
-                confidence: result.claims.length > 0 && result.claims[0] ? result.claims[0].prediction.skorKepercayaan : 0.88,
-                summary: `Dianalisis dari artikel: ${extracted.title || 'Berita Daring'}`,
-                explanation: result.claims[0]?.prediction.explanation || 'Analisis artikel selesai.',
-                claims: claimsForDb,
-                modelVersion: 'alitheia-orchestrator-v1',
-              },
-              sources
-            );
-
-            await safeAddCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim artikel berhasil diselesaikan.');
-            await safeCompleteCheck(check.id);
-          } catch (err: unknown) {
-            logger.error({ err, checkId: check.id }, '[ChecksRoute] Gagal mengekstrak/menganalisis artikel');
-            await safeUpdateCheckStatus(check.id, 'failed', 'failed', {
-              code: 'EXTRACTION_OR_ANALYSIS_FAILED',
-              message: err instanceof Error ? err.message : String(err),
-            });
-            await safeAddCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
-          }
-        });
-
-        return res.status(202).json({
-          id: check.id,
-          status: 'queued',
-          cached: false,
-        });
+      // Jika media sosial, daftarkan juga ke antrean media worker (bila Redis aktif)
+      if (isSocialMedia) {
+        await safeAddCheckEvent(
+          check.id,
+          'queued',
+          'started',
+          `Tautan ${platformLabel} siap diproses oleh pipeline analisis Alitheia.`
+        );
+        await enqueueCheck(check.id);
       }
 
-      // ── ALUR B: Media Sosial / Video (TikTok, Instagram, YouTube, X) ──
-      await addCheckEvent(check.id, 'queued', 'started', `Tautan ${platformLabel} lolos Anti-SSRF, antrean analisis media siap.`);
-      await enqueueCheck(check.id);
+      // Pemrosesan asinkron: Ekstraksi konten (Web/Medsos) & Orkestrasi AI
+      setImmediate(async () => {
+        try {
+          await safeUpdateCheckStatus(check.id, 'extracting', 'extracting');
+          await safeAddCheckEvent(
+            check.id,
+            'extract',
+            'started',
+            `Mengekstrak teks & metadata konten dari ${platformLabel}...`
+          );
+
+          const extracted = await articleExtractor.extractFromUrl(url);
+          await safeAddCheckEvent(
+            check.id,
+            'extract',
+            'succeeded',
+            `Berhasil mengekstrak konten: "${extracted.title || platformLabel}"`
+          );
+
+          await safeUpdateCheckStatus(check.id, 'analyzing', 'analyzing');
+          await safeAddCheckEvent(
+            check.id,
+            'analyze',
+            'started',
+            'Menjalankan orkestrasi pencocokan bukti dan inferensi NLI...'
+          );
+
+          const result = await orchestratorService.verify(extracted);
+
+          const sources = result.claims.flatMap((c) =>
+            c.bukti.map((b) => ({
+              title: b.judulRujukan || c.subjek || 'Sumber Rujukan',
+              url: b.urlRujukan || url,
+              publisher:
+                b.penerbit ||
+                (b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta'),
+              stance: determineSourceStance(
+                b.judulRujukan || '',
+                b.kutipan || '',
+                c.prediction.hasilAkhir
+              ),
+              snippet: b.kutipan || '',
+            }))
+          );
+
+          const claimsForDb = result.claims.map((c) => ({
+            text: c.kalimatKlaim,
+            verdict:
+              c.prediction.hasilAkhir === 'BENAR'
+                ? 'True'
+                : c.prediction.hasilAkhir === 'SALAH'
+                ? 'False'
+                : 'Unverified',
+            explanation:
+              c.prediction.explanation || 'Klaim dicocokkan dengan rujukan berita resmi.',
+            source_ids: sources.map((_, sIdx) => `src-${sIdx + 1}`),
+          }));
+
+          const isAllBenar = result.claims.every((c) => c.prediction.hasilAkhir === 'BENAR');
+          const isAnySalah = result.claims.some((c) => c.prediction.hasilAkhir === 'SALAH');
+          const overallVerdict = isAllBenar ? 'True' : isAnySalah ? 'False' : 'Unverified';
+
+          await safeSaveAnalysis(
+            check.id,
+            {
+              verdict: overallVerdict,
+              confidence:
+                result.claims.length > 0 && result.claims[0]
+                  ? result.claims[0].prediction.skorKepercayaan
+                  : 0.88,
+              summary: `Dianalisis dari ${platformLabel}: ${extracted.title || 'Konten Daring'}`,
+              explanation: result.claims[0]?.prediction.explanation || 'Analisis konten selesai.',
+              claims: claimsForDb,
+              modelVersion: 'alitheia-orchestrator-v1',
+            },
+            sources
+          );
+
+          await safeAddCheckEvent(
+            check.id,
+            'analyze',
+            'succeeded',
+            'Analisis klaim konten berhasil diselesaikan.'
+          );
+          await safeCompleteCheck(check.id);
+        } catch (err: unknown) {
+          logger.error({ err, checkId: check.id }, '[ChecksRoute] Gagal mengekstrak/menganalisis konten tautan');
+          await safeUpdateCheckStatus(check.id, 'failed', 'failed', {
+            code: 'EXTRACTION_OR_ANALYSIS_FAILED',
+            message: err instanceof Error ? err.message : String(err),
+          });
+          await safeAddCheckEvent(check.id, 'analyze', 'failed', err instanceof Error ? err.message : String(err));
+        }
+      });
 
       return res.status(202).json({
         id: check.id,
