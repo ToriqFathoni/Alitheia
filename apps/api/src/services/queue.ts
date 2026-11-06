@@ -6,9 +6,9 @@ const inMemoryQueue: string[] = [];
 export async function getRedis(): Promise<any> {
   if (!redis) {
     try {
-      // @ts-ignore
-      const { default: Redis } = await import('ioredis');
-      redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+      const ioredisModule: any = await import('ioredis');
+      const RedisCtor = ioredisModule.default || ioredisModule;
+      redis = new RedisCtor(process.env.REDIS_URL || 'redis://localhost:6379', {
         maxRetriesPerRequest: 1,
         connectTimeout: 2000,
         lazyConnect: true,
