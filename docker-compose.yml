@@ -48,7 +48,7 @@ services:
       DATABASE_URL: "postgresql://alitheia:alitheia_secret@postgres:5432/alitheia?schema=public"
       REDIS_URL: "redis://redis:6379"
       JWT_SECRET: "${JWT_SECRET:-alitheia-dev-secret-key-change-in-production-min-32-chars}"
-      CORS_ORIGINS: "http://localhost:3000"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3001,http://localhost:3000}"
       GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
       FACTCHECK_API_KEY: "${FACTCHECK_API_KEY:-}"
     depends_on:

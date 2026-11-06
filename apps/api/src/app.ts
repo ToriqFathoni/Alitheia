@@ -13,16 +13,22 @@ verificationWorker.init();
 
 export const app = express();
 
-const allowedOrigins = env.CORS_ORIGINS.split(",").map((origin) => origin.trim());
+const allowedOrigins = new Set([
+  ...env.CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean),
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+]);
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Izinkan request tanpa origin (seperti curl, mobile apps, atau server-to-server)
-      if (!origin || allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.has("*") || allowedOrigins.has(origin)) {
         callback(null, true);
       } else {
-        callback(new Error(`CORS diblokir untuk origin: ${origin}`));
+        callback(null, false);
       }
     },
     credentials: true,

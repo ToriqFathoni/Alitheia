@@ -231,7 +231,7 @@ export async function listChecks(options: {
   platform?: string;
   q?: string;
 } = {}): Promise<{
-  data: Check[];
+  data: (Check & { analysisResult: { verdict: string } | null })[];
   total: number;
   page: number;
   pageSize: number;
@@ -277,6 +277,14 @@ export async function listChecks(options: {
       skip,
       take: pageSize,
       orderBy: { createdAt: 'desc' },
+      // The history UI renders a verdict per row, so select it alongside the
+      // check. Only the verdict column — the full analysis payload would make
+      // the list query needlessly heavy.
+      include: {
+        analysisResult: {
+          select: { verdict: true },
+        },
+      },
     }),
   ]);
 

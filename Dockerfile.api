@@ -48,6 +48,13 @@ COPY apps/api/ ./apps/api/
 # Generate Prisma client
 RUN npx prisma generate --schema=packages/database/prisma/schema.prisma
 
+# Keep the API compiler on the supported TypeScript 5 toolchain. The existing
+# lockfile can resolve a prerelease TypeScript package without its Linux binary.
+RUN npm install --workspace=apps/api --no-save --package-lock=false typescript@5.9.3
+
+# Build shared TypeScript declarations before compiling the API.
+RUN npm run build --workspace=packages/shared-types
+
 # Build the database package
 RUN npm run build --workspace=packages/database 2>/dev/null || true
 
@@ -85,6 +92,7 @@ COPY --from=builder /app/node_modules/@prisma/client ./node_modules/@prisma/clie
 COPY --from=builder /app/apps/api/dist/ ./apps/api/dist/
 COPY --from=builder /app/packages/config/ ./packages/config/
 COPY --from=builder /app/packages/database/dist/ ./packages/database/dist/
+COPY --from=builder /app/packages/shared-types/dist/ ./packages/shared-types/dist/
 
 EXPOSE 5000
 

@@ -26,8 +26,11 @@ COPY packages/config/package.json ./packages/config/package.json
 COPY packages/database/package.json ./packages/database/package.json
 COPY packages/shared-types/package.json ./packages/shared-types/package.json
 
-# Install ALL dependencies (dev included — needed for build tooling)
-RUN npm ci
+# Install ALL dependencies (dev included — needed for build tooling). The
+# Lightning CSS Linux binary is installed explicitly because npm ci can omit
+# platform-specific optional packages when the lockfile was created elsewhere.
+RUN npm ci --include=optional && \
+	npm install --no-save --package-lock=false lightningcss-linux-x64-gnu@1.32.0
 
 # ---------- Stage 3: builder ----------
 FROM deps AS builder

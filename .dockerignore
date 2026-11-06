@@ -34,7 +34,14 @@ npm-debug.log*
 Dockerfile*
 docker-compose*.yml
 
+# Secrets / credentials (never bake into image layers)
+cookies.txt
+*.cookies
+.env.local
+.env.production
+
 # Misc
 coverage
 plan
 .agent
+file_prompt
