@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 import redis
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from src.config import Config
 from src.pipeline import run_check_pipeline
@@ -61,6 +62,10 @@ def main() -> None:
                     logger.info("Completed check: %s", check_id_str)
                 except Exception as e:
                     logger.error("Failed check %s: %s", check_id_str, e, exc_info=True)
+        except RedisTimeoutError:
+            # BRPOP timeout is expected while the queue is idle. Redis-py
+            # raises it when socket_timeout matches the blocking timeout.
+            continue
         except redis.ConnectionError as e:
             logger.warning("Redis connection error, retrying in 5 seconds: %s", e)
             time.sleep(5)

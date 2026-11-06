@@ -505,9 +505,14 @@ router.get(
           id: c.id,
           source_url: c.sourceUrl,
           normalized_url: c.normalizedUrl,
+          // The history rows label each entry by how it was submitted (text vs
+          // link) and show its verdict, so both must ride along with the list.
+          input_text: c.inputText ?? null,
+          input_type: c.inputType ?? null,
           platform: c.platform,
           status: c.status,
           progress_stage: c.progressStage,
+          verdict: c.analysisResult?.verdict ?? null,
           error_code: c.errorCode,
           error_message: c.errorMessage,
           created_at: c.createdAt.toISOString(),

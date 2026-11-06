@@ -7,8 +7,9 @@ let redis: Redis | null = null;
 export function getRedis(): Redis {
   if (!redis) {
     redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-      maxRetriesPerRequest: 1,
-      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+      connectTimeout: 5000,
+      lazyConnect: false,
       enableOfflineQueue: false,
     });
     redis.on('error', (err) => {
@@ -20,12 +21,8 @@ export function getRedis(): Redis {
 }
 
 export async function enqueueCheck(checkId: string): Promise<void> {
-  try {
-    const client = getRedis();
-    await client.lpush(QUEUE_KEY, checkId);
-  } catch (err: unknown) {
-    console.warn('[Queue] Notice: Job queuing to Redis skipped (worker may be offline):', err instanceof Error ? err.message : String(err));
-  }
+  const client = getRedis();
+  await client.lpush(QUEUE_KEY, checkId);
 }
 
 export async function closeRedis(): Promise<void> {

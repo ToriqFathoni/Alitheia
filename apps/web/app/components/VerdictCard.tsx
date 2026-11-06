@@ -1,7 +1,5 @@
 "use client";
 
-import type { ReactNode } from "react";
-
 interface VerdictCardProps {
   verdict: string;
   confidence: number | null;
@@ -9,171 +7,104 @@ interface VerdictCardProps {
 
 interface VerdictConfig {
   label: string;
-  bgBadge: string;
-  textColor: string;
-  accentBg: string;
-  barColor: string;
-  icon: ReactNode;
+  headline: string;
+  accent: string;
+  onAccent: string;
+  glyph: string;
 }
 
 export default function VerdictCard({ verdict, confidence }: VerdictCardProps) {
-  const normVerdict = (verdict || "").toLowerCase().trim();
+  const norm = (verdict || "").toLowerCase().trim();
 
   let config: VerdictConfig;
 
-  switch (normVerdict) {
-    case "hoax":
-    case "false":
-    case "salah":
-      config = {
-        label: "Hoax",
-        bgBadge: "bg-[#DC2626]",
-        textColor: "text-[#DC2626]",
-        accentBg: "bg-red-50 border-red-200",
-        barColor: "#DC2626",
-        icon: (
-          <svg
-            className="h-10 w-10 text-[#DC2626]"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth={2.5}
-            aria-hidden="true"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        ),
-      };
-      break;
-
-    case "real":
-    case "verified":
-    case "true":
-    case "benar":
-      config = {
-        label: "Verified",
-        bgBadge: "bg-[#059669]",
-        textColor: "text-[#059669]",
-        accentBg: "bg-emerald-50 border-emerald-200",
-        barColor: "#059669",
-        icon: (
-          <svg
-            className="h-10 w-10 text-[#059669]"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth={2.5}
-            aria-hidden="true"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
-        ),
-      };
-      break;
-
-    case "misleading":
-      config = {
-        label: "Misleading",
-        bgBadge: "bg-[#D97706]",
-        textColor: "text-[#D97706]",
-        accentBg: "bg-amber-50 border-amber-200",
-        barColor: "#D97706",
-        icon: (
-          <svg
-            className="h-10 w-10 text-[#D97706]"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth={2.5}
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-            />
-          </svg>
-        ),
-      };
-      break;
-
-    case "unverified":
-    case "tidak_pasti":
-    default:
-      config = {
-        label: normVerdict === "unverified" ? "Unverified" : verdict || "Unverified",
-        bgBadge: "bg-[#6B7280]",
-        textColor: "text-[#6B7280]",
-        accentBg: "bg-slate-50 border-slate-200",
-        barColor: "#6B7280",
-        icon: (
-          <svg
-            className="h-10 w-10 text-[#6B7280]"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            strokeWidth={2.5}
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M12 21a9 9 0 100-18 9 9 0 000 18z"
-            />
-          </svg>
-        ),
-      };
-      break;
+  if (["true", "real", "verified", "benar"].includes(norm)) {
+    config = {
+      label: "BENAR",
+      headline: "Informasi terverifikasi",
+      accent: "var(--verdict-true)",
+      onAccent: "#fff",
+      glyph: "✓",
+    };
+  } else if (["false", "hoax", "salah"].includes(norm)) {
+    config = {
+      label: "HOAX",
+      headline: "Terdeteksi potensi hoax",
+      accent: "var(--verdict-false)",
+      onAccent: "#fff",
+      glyph: "✕",
+    };
+  } else if (["misleading", "sebagian", "mixed"].includes(norm)) {
+    config = {
+      label: "SEBAGIAN",
+      headline: "Informasi menyesatkan",
+      accent: "var(--verdict-mixed)",
+      onAccent: "var(--ink)",
+      glyph: "!",
+    };
+  } else {
+    config = {
+      label: "TIDAK PASTI",
+      headline: "Belum dapat dipastikan",
+      accent: "var(--verdict-none)",
+      onAccent: "#fff",
+      glyph: "?",
+    };
   }
 
-  const confidencePercent =
-    confidence !== null && confidence !== undefined
-      ? Math.min(100, Math.max(0, Math.round(confidence <= 1 ? confidence * 100 : confidence)))
-      : null;
+  // Confidence arrives either as a 0–1 ratio or an already-scaled percentage;
+  // clamp so a stray out-of-range value cannot overflow the bar.
+  const percent =
+    confidence === null || confidence === undefined
+      ? null
+      : Math.min(100, Math.max(0, Math.round(confidence <= 1 ? confidence * 100 : confidence)));
 
   return (
-    <div className="mx-auto w-full max-w-[612px] rounded-2xl border border-[#E5E7EB] bg-white p-6 sm:p-8 text-center shadow-[0_1px_3px_rgba(15,23,42,0.05)]">
-      {/* Icon */}
-      <div
-        className={`mx-auto flex h-20 w-20 items-center justify-center rounded-2xl border ${config.accentBg}`}
-      >
-        {config.icon}
-      </div>
-
-      {/* Verdict Label */}
-      <div className="mt-4">
+    <section className="verdict-panel p-6 sm:p-8" aria-label="Hasil verifikasi">
+      <div className="flex flex-wrap items-center gap-5">
         <span
-          className={`inline-block rounded-full px-4 py-1 text-[13px] font-bold uppercase tracking-wider text-white ${config.bgBadge}`}
+          aria-hidden="true"
+          className="flex h-16 w-16 shrink-0 items-center justify-center text-3xl font-bold"
+          style={{ background: config.accent, color: config.onAccent, border: "3px solid var(--line)" }}
         >
-          {config.label}
+          {config.glyph}
         </span>
+
+        <div className="min-w-0 flex-1">
+          <span
+            className="inline-block px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em]"
+            style={{ background: config.accent, color: config.onAccent, border: "2px solid var(--line)" }}
+          >
+            {config.label}
+          </span>
+          <h2 className="display-title mt-2 text-2xl sm:text-3xl">{config.headline}</h2>
+        </div>
       </div>
 
-      <h2 className="mt-2 text-[26px] font-bold tracking-tight text-[#0F172A] sm:text-[30px]">
-        {config.label === "Verified"
-          ? "Information Verified"
-          : config.label === "Hoax"
-          ? "Potential Hoax Detected"
-          : config.label === "Misleading"
-          ? "Misleading Information"
-          : "Verdict Unverified"}
-      </h2>
-
-      {/* Confidence Bar */}
-      {confidencePercent !== null && (
-        <div className="mx-auto mt-6 max-w-[320px]">
-          <div className="mb-2 flex items-center justify-between text-[12px] font-medium text-[#475569]">
-            <span>Confidence score</span>
-            <span className="font-bold text-[#0F172A]">{confidencePercent}%</span>
+      {percent !== null && (
+        <div className="mt-6">
+          <div className="mb-2 flex items-center justify-between text-xs font-bold uppercase tracking-wider">
+            <span>Tingkat keyakinan</span>
+            <span>{percent}%</span>
           </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-[#E5E7EB]">
+          {/* role=meter conveys the value to assistive tech, which a styled div
+              alone does not. */}
+          <div
+            role="meter"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Tingkat keyakinan"
+            className="h-4 w-full"
+            style={{ border: "2px solid var(--line)", background: "var(--sunken)" }}
+          >
             <div
-              className="h-full rounded-full transition-all duration-700 ease-out"
-              style={{ width: `${confidencePercent}%`, backgroundColor: config.barColor }}
+              className="h-full transition-[width] duration-700 ease-out"
+              style={{ width: `${percent}%`, background: config.accent }}
             />
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

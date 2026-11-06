@@ -109,11 +109,14 @@ export interface CheckListItem {
   id: string;
   source_url: string;
   normalized_url?: string;
+  /** Present for text submissions; null for URL checks. */
   input_text?: string | null;
-  input_type?: string;
+  /** "text" | "url" — drives the type tag in the history list. */
+  input_type?: string | null;
   platform?: string | null;
   status: string;
   progress_stage?: string | null;
+  /** Overall verdict from the analysis, e.g. "True" | "False" | "Unverified". */
   verdict?: string | null;
   error_code?: string | null;
   error_message?: string | null;

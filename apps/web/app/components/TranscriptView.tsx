@@ -25,15 +25,15 @@ export default function TranscriptView({ transcript }: TranscriptViewProps) {
   const segments = transcript.segments || [];
 
   return (
-    <div className="w-full rounded-xl border border-[#E5E7EB] bg-white shadow-sm transition-all">
+    <section className="panel w-full" aria-label="Transkrip audio">
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
-        className="flex w-full items-center justify-between p-4 text-left transition-colors hover:bg-[#F8FAFC] sm:p-5"
+        className="flex w-full items-center justify-between p-4 text-left transition-colors hover:bg-[var(--yellow)] sm:p-5"
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#EEF2FF] text-[#4338CA]">
+          <div className="flex h-8 w-8 items-center justify-center border-2 border-[var(--line)] bg-[var(--green)] text-[var(--ink)]">
             <svg
               className="h-4 w-4"
               fill="none"
@@ -49,10 +49,10 @@ export default function TranscriptView({ transcript }: TranscriptViewProps) {
             </svg>
           </div>
           <div>
-            <h3 className="text-[14px] font-bold text-[#0F172A] sm:text-[15px]">
+            <h3 className="text-[14px] font-bold sm:text-[15px]">
               Transcript
             </h3>
-            <p className="text-[11px] text-[#64748B]">
+            <p className="text-[11px]" style={{ color: "var(--ink-soft)" }}>
               {transcript.language ? `Language: ${transcript.language.toUpperCase()} • ` : ""}
               {segments.length > 0 ? `${segments.length} segments` : "Full transcript text"}
             </p>
@@ -60,11 +60,11 @@ export default function TranscriptView({ transcript }: TranscriptViewProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-[#64748B]">
+          <span className="text-[11px] font-bold uppercase" style={{ color: "var(--ink-soft)" }}>
             {isOpen ? "Hide" : "Show"}
           </span>
           <svg
-            className={`h-4 w-4 text-[#64748B] transition-transform duration-200 ${
+            className={`h-4 w-4 transition-transform duration-200 ${
               isOpen ? "rotate-180" : ""
             }`}
             fill="none"
@@ -78,17 +78,17 @@ export default function TranscriptView({ transcript }: TranscriptViewProps) {
       </button>
 
       {isOpen && (
-        <div className="border-t border-[#E5E7EB] px-4 pb-5 pt-3 sm:px-5">
+        <div className="border-t-2 border-[var(--line)] px-4 pb-5 pt-3 sm:px-5">
           {/* View toggle if segments exist */}
           {segments.length > 0 && transcript.full_text && (
-            <div className="mb-4 flex gap-2 border-b border-[#F1F5F9] pb-3">
+            <div className="mb-4 flex gap-2 border-b-2 border-[var(--line)] pb-3">
               <button
                 type="button"
                 onClick={() => setActiveTab("segments")}
                 className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                   activeTab === "segments"
-                    ? "bg-[#4338CA] text-white"
-                    : "bg-[#F1F5F9] text-[#64748B] hover:text-[#0F172A]"
+                    ? "border-2 border-[var(--line)] bg-[var(--line)] text-[var(--yellow)]"
+                    : "border-2 border-[var(--line)] bg-[var(--paper)] hover:bg-[var(--yellow)]"
                 }`}
               >
                 Timed Segments
@@ -98,8 +98,8 @@ export default function TranscriptView({ transcript }: TranscriptViewProps) {
                 onClick={() => setActiveTab("full")}
                 className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
                   activeTab === "full"
-                    ? "bg-[#4338CA] text-white"
-                    : "bg-[#F1F5F9] text-[#64748B] hover:text-[#0F172A]"
+                    ? "border-2 border-[var(--line)] bg-[var(--line)] text-[var(--yellow)]"
+                    : "border-2 border-[var(--line)] bg-[var(--paper)] hover:bg-[var(--yellow)]"
                 }`}
               >
                 Full Text
@@ -113,23 +113,23 @@ export default function TranscriptView({ transcript }: TranscriptViewProps) {
               {segments.map((seg, idx) => (
                 <div
                   key={idx}
-                  className="flex items-start gap-3 rounded-lg border border-[#F1F5F9] bg-[#FAFAFA] p-2.5 text-[12px] transition-colors hover:bg-white"
+                  className="flex items-start gap-3 border-2 border-[var(--line)] bg-[var(--sunken)] p-2.5 text-[12px] transition-colors hover:bg-[var(--yellow)]"
                 >
-                  <span className="shrink-0 rounded bg-[#E2E8F0] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[#475569]">
+                  <span className="shrink-0 border-2 border-[var(--line)] bg-[var(--yellow)] px-1.5 py-0.5 font-mono text-[10px] font-medium">
                     {formatTime(seg.start)} - {formatTime(seg.end)}
                   </span>
-                  <p className="flex-1 text-[#334155]">{seg.text}</p>
+                  <p className="flex-1" style={{ color: "var(--ink-soft)" }}>{seg.text}</p>
                 </div>
               ))}
             </div>
           ) : (
             /* Full text view */
-            <div className="max-h-[360px] overflow-y-auto rounded-lg bg-[#F8FAFC] p-4 text-[13px] leading-relaxed text-[#334155]">
+            <div className="max-h-[360px] overflow-y-auto border-2 border-[var(--line)] bg-[var(--sunken)] p-4 text-[13px] leading-relaxed" style={{ color: "var(--ink-soft)" }}>
               {transcript.full_text || "No full transcript text available."}
             </div>
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }

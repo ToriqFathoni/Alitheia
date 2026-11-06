@@ -39,15 +39,15 @@ export default function OcrView({ ocrResults }: OcrViewProps) {
   const groupKeys = Object.keys(grouped);
 
   return (
-    <div className="w-full rounded-xl border border-[#E5E7EB] bg-white shadow-sm transition-all">
+    <section className="panel w-full" aria-label="Hasil OCR">
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={isOpen}
-        className="flex w-full items-center justify-between p-4 text-left transition-colors hover:bg-[#F8FAFC] sm:p-5"
+        className="flex w-full items-center justify-between p-4 text-left transition-colors hover:bg-[var(--yellow)] sm:p-5"
       >
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#FDF4FF] text-[#A21CAF]">
+          <div className="flex h-8 w-8 items-center justify-center border-2 border-[var(--line)] bg-[var(--coral)] text-[var(--ink)]">
             <svg
               className="h-4 w-4"
               fill="none"
@@ -63,21 +63,21 @@ export default function OcrView({ ocrResults }: OcrViewProps) {
             </svg>
           </div>
           <div>
-            <h3 className="text-[14px] font-bold text-[#0F172A] sm:text-[15px]">
+            <h3 className="text-[14px] font-bold sm:text-[15px]">
               OCR Results
             </h3>
-            <p className="text-[11px] text-[#64748B]">
+            <p className="text-[11px]" style={{ color: "var(--ink-soft)" }}>
               {ocrResults.length} text frame{ocrResults.length === 1 ? "" : "s"} extracted from media
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-[#64748B]">
+          <span className="text-[11px] font-bold uppercase" style={{ color: "var(--ink-soft)" }}>
             {isOpen ? "Hide" : "Show"}
           </span>
           <svg
-            className={`h-4 w-4 text-[#64748B] transition-transform duration-200 ${
+            className={`h-4 w-4 transition-transform duration-200 ${
               isOpen ? "rotate-180" : ""
             }`}
             fill="none"
@@ -91,17 +91,17 @@ export default function OcrView({ ocrResults }: OcrViewProps) {
       </button>
 
       {isOpen && (
-        <div className="border-t border-[#E5E7EB] px-4 pb-5 pt-4 sm:px-5">
+        <div className="border-t-2 border-[var(--line)] px-4 pb-5 pt-4 sm:px-5">
           <div className="space-y-4">
             {groupKeys.map((groupKey) => {
               const items = grouped[groupKey];
               return (
-                <div key={groupKey} className="rounded-lg border border-[#F1F5F9] bg-[#FAFAFA] p-3.5">
-                  <div className="mb-2 flex items-center justify-between border-b border-[#E2E8F0] pb-2">
-                    <span className="text-[12px] font-bold uppercase tracking-wider text-[#475569]">
+                <div key={groupKey} className="border-2 border-[var(--line)] bg-[var(--sunken)] p-3.5">
+                  <div className="mb-2 flex items-center justify-between border-b-2 border-[var(--line)] pb-2">
+                    <span className="text-[12px] font-bold uppercase tracking-wider">
                       {formatSourceName(groupKey)}
                     </span>
-                    <span className="text-[11px] text-[#94A3B8]">
+                    <span className="text-[11px]" style={{ color: "var(--ink-soft)" }}>
                       {items.length} item{items.length === 1 ? "" : "s"}
                     </span>
                   </div>
@@ -112,14 +112,14 @@ export default function OcrView({ ocrResults }: OcrViewProps) {
                       return (
                         <div
                           key={item.id || idx}
-                          className="rounded-md border border-[#E5E7EB] bg-white p-3 text-[12px]"
+                          className="border-2 border-[var(--line)] bg-[var(--paper)] p-3 text-[12px]"
                         >
                           {timeStr && (
-                            <span className="mb-1 inline-block rounded bg-[#F1F5F9] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#475569]">
+                            <span className="mb-1 inline-block border-2 border-[var(--line)] bg-[var(--yellow)] px-1.5 py-0.5 font-mono text-[10px] font-semibold">
                               Frame @ {timeStr}
                             </span>
                           )}
-                          <p className="whitespace-pre-wrap leading-relaxed text-[#334155]">
+                          <p className="whitespace-pre-wrap leading-relaxed" style={{ color: "var(--ink-soft)" }}>
                             {item.full_text || "(No text recognized)"}
                           </p>
                         </div>
@@ -132,6 +132,6 @@ export default function OcrView({ ocrResults }: OcrViewProps) {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }
