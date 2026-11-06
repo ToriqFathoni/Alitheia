@@ -167,43 +167,72 @@ Ringkasan: ${item.snippet}`;
       "[OrchestratorService] Inferensi LLM selesai dieksekusi."
     );
 
-    // 5. Susun bukti rujukan (Evidence)
+    // 5. Susun bukti rujukan (Evidence) dengan penyaringan relevansi ketat
     const evidenceList: ClaimEvidenceItem[] = [];
+    const stopWords = new Set([
+      "yang", "untuk", "pada", "ke", "para", "namun", "menurut", "antara", "dia", "mereka",
+      "anda", "kita", "aku", "bisa", "ada", "tidak", "akan", "dari", "dalam", "dengan",
+      "bahwa", "oleh", "saat", "juga", "sudah", "lebih", "karena", "bagi", "sampai", "seperti",
+      "masukan", "teks", "langsung", "berita", "dikabarkan", "melaksanakan"
+    ]);
 
-    // Prioritaskan artikel dari Web Search Terkini
-    for (const item of webResults.slice(0, 4)) {
-      evidenceList.push({
-        asalBukti: "WEB_SEARCH",
-        urlRujukan: item.url,
-        judulRujukan: item.title,
-        penerbit: item.publisher,
-        kutipan: item.snippet,
-      });
-    }
+    const inputTokens = rawText
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 4 && !stopWords.has(w));
+    const uniqueInputTokens = new Set(inputTokens);
 
-    // Tambahkan referensi dari data latih DB yang selaras
-    for (const ex of fewShotExamples.slice(0, 2)) {
-      evidenceList.push({
-        asalBukti: "VECTOR_DB",
-        urlRujukan: content.sourceUrl || "https://alitheia.internal/knowledge-base",
-        judulRujukan: `Basis Pengetahuan #${ex.id.slice(0, 8)}: ${ex.judul}`,
-        penerbit: "Arsip Data Latih Alitheia",
-        kutipan: `Diverifikasi sebagai ${ex.label === 1 ? "Hoax (Salah)" : "Fakta (Benar)"}. ${ex.narasi.slice(0, 200)}...`,
-      });
-    }
-
-    // Tambahkan sumber yang disarankan oleh LLM
+    // A. Prioritaskan sumber yang secara eksplisit disarankan oleh LLM
     if (llmOutput.suggestedSources && llmOutput.suggestedSources.length > 0) {
       for (const src of llmOutput.suggestedSources) {
         if (src.url && !evidenceList.some((e) => e.urlRujukan === src.url)) {
+          const matchedWeb = webResults.find((w) => w.url === src.url);
           evidenceList.push({
             asalBukti: "FACT_CHECK_API",
             urlRujukan: src.url,
-            judulRujukan: src.title || "Klarifikasi Pemeriksa Fakta",
-            penerbit: src.url ? new URL(src.url).hostname : "Pemeriksa Fakta",
-            kutipan: src.snippet || src.title || "Klarifikasi dan rujukan silang berita.",
+            judulRujukan: src.title || matchedWeb?.title || "Klarifikasi Pemeriksa Fakta",
+            penerbit: matchedWeb?.publisher || (src.url ? new URL(src.url).hostname : "Pemeriksa Fakta"),
+            kutipan: src.snippet || matchedWeb?.snippet || src.title || "Klarifikasi dan rujukan silang berita.",
           });
         }
+      }
+    }
+
+    // B. Tambahkan artikel dari Web Search Terkini yang relevan dengan topik klaim
+    for (const item of webResults) {
+      if (evidenceList.length >= 5) break;
+      if (evidenceList.some((e) => e.urlRujukan === item.url)) continue;
+
+      const lowerCombined = `${item.title} ${item.snippet}`.toLowerCase();
+      const hasOverlap = [...uniqueInputTokens].some((t) => lowerCombined.includes(t));
+
+      // Hanya masukkan jika memiliki korelasi kata kunci nyata dengan berita
+      if (hasOverlap) {
+        evidenceList.push({
+          asalBukti: "WEB_SEARCH",
+          urlRujukan: item.url,
+          judulRujukan: item.title,
+          penerbit: item.publisher,
+          kutipan: item.snippet,
+        });
+      }
+    }
+
+    // C. Tambahkan referensi data latih DB HANYA jika topiknya benar-benar sama (minimal 2 token cocok)
+    for (const ex of fewShotExamples) {
+      if (evidenceList.length >= 5) break;
+      const exCombined = `${ex.judul} ${ex.narasi}`.toLowerCase();
+      const matchCount = [...uniqueInputTokens].filter((t) => exCombined.includes(t)).length;
+
+      if (matchCount >= 2) {
+        evidenceList.push({
+          asalBukti: "VECTOR_DB",
+          urlRujukan: content.sourceUrl || "https://alitheia.internal/knowledge-base",
+          judulRujukan: `Basis Pengetahuan: ${ex.judul}`,
+          penerbit: "Arsip Data Latih Alitheia",
+          kutipan: `Diverifikasi sebagai ${ex.label === 1 ? "Hoax (Salah)" : "Fakta (Benar)"}. ${ex.narasi.slice(0, 180)}...`,
+        });
       }
     }
 

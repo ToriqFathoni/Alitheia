@@ -146,6 +146,25 @@ async function safeCompleteCheck(checkId: string): Promise<void> {
 
 const router = Router();
 
+function determineSourceStance(
+  sourceTitle: string,
+  snippet: string,
+  claimVerdict: string
+): 'SUPPORTS' | 'REFUTES' | 'NEUTRAL' {
+  const combined = `${sourceTitle} ${snippet}`.toLowerCase();
+  const debunkRegex = /(\[hoaks\]|\[hoax\]|hoaks|hoax|palsu|keliru|salah|bantah|klarifikasi|turnbackhoax|cekfakta|cek fakta|tidak benar|disinformasi|misinformasi)/i;
+
+  if (debunkRegex.test(combined)) {
+    return 'REFUTES';
+  }
+
+  if (claimVerdict === 'BENAR' || claimVerdict === 'True') {
+    return 'SUPPORTS';
+  }
+
+  return 'NEUTRAL';
+}
+
 function formatCheckDetail(check: CheckWithRelations) {
   const steps = (check.events ?? []).map((e) => ({
     id: e.id,
@@ -415,7 +434,11 @@ router.post(
                 title: b.judulRujukan || c.subjek || 'Sumber Rujukan Terpercaya',
                 url: b.urlRujukan || 'https://cekfakta.tempo.co',
                 publisher: b.penerbit || (b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta'),
-                stance: c.prediction.hasilAkhir === 'BENAR' ? 'SUPPORTS' : c.prediction.hasilAkhir === 'SALAH' ? 'REFUTES' : 'NEUTRAL',
+                stance: determineSourceStance(
+                  b.judulRujukan || '',
+                  b.kutipan || '',
+                  c.prediction.hasilAkhir
+                ),
                 snippet: b.kutipan || '',
               }))
             );
@@ -534,7 +557,11 @@ router.post(
                 title: b.judulRujukan || c.subjek || 'Sumber Rujukan',
                 url: b.urlRujukan || url,
                 publisher: b.penerbit || (b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta'),
-                stance: c.prediction.hasilAkhir === 'BENAR' ? 'SUPPORTS' : c.prediction.hasilAkhir === 'SALAH' ? 'REFUTES' : 'NEUTRAL',
+                stance: determineSourceStance(
+                  b.judulRujukan || '',
+                  b.kutipan || '',
+                  c.prediction.hasilAkhir
+                ),
                 snippet: b.kutipan || '',
               }))
             );

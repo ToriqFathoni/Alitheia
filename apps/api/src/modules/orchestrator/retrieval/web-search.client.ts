@@ -18,11 +18,19 @@ export class WebSearchClient {
 
   /**
    * Ekstraksi query pencarian ringkas dari judul atau teks berita.
-   * Menghilangkan kata sambung umum agar query pencarian relevan.
+   * Mengabaikan judul placeholder (seperti "Masukan Teks Langsung") dan membuang stop words.
    */
   public buildSearchQuery(title?: string, text?: string): string {
-    const raw = (title && title.trim().length > 5 ? title : text || "").trim();
-    const cleanText = raw
+    const isGenericTitle =
+      !title ||
+      /^(masukan teks|berita masukan|teks|artikel|plain text|plain_text|untitled|input teks)/i.test(title.trim()) ||
+      title.trim().toLowerCase() === "masukan teks langsung";
+
+    const raw = (isGenericTitle ? (text || "") : title || text || "").trim();
+    // Ambil kalimat pertama atau maksimal 150 karakter pertama
+    const candidateText = raw.split(/[.!?\n]/)[0] || raw;
+
+    const cleanText = candidateText
       .replace(/[^\w\s\u00C0-\u024F]/gi, " ")
       .replace(/\s+/g, " ")
       .trim();
@@ -30,12 +38,16 @@ export class WebSearchClient {
     const stopWords = new Set([
       "yang", "di", "ke", "dari", "pada", "dalam", "untuk", "dengan", "dan", "atau",
       "ini", "itu", "juga", "adalah", "sebagai", "oleh", "akan", "telah", "bisa", "ada",
-      "tidak", "karena", "maka", "tentang", "bahwa", "masukan", "teks", "langsung"
+      "tidak", "karena", "maka", "tentang", "bahwa", "masukan", "teks", "langsung", "berita",
+      "apakah", "bagaimana", "mengapa", "kenapa", "melaksanakan", "dikabarkan", "menurut",
+      "sampai", "sudah", "lebih", "dapat", "sebuah", "suatu"
     ]);
 
-    const words = cleanText.split(" ").filter((w) => w.length > 2 && !stopWords.has(w.toLowerCase()));
-    const selected = words.slice(0, 7).join(" ");
+    const words = cleanText
+      .split(" ")
+      .filter((w) => w.length > 2 && !stopWords.has(w.toLowerCase()));
 
+    const selected = words.slice(0, 6).join(" ");
     return selected.length > 0 ? selected : cleanText.slice(0, 60);
   }
 
@@ -61,7 +73,12 @@ export class WebSearchClient {
       }
 
       const xml = await response.text();
-      return this.parseRssXml(xml, maxResults);
+      const queryTokens = query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length >= 4);
+
+      return this.parseRssXml(xml, maxResults, queryTokens);
     } catch (err: any) {
       logger.debug({ err: err?.message, query }, "[WebSearchClient] Gagal mengambil Google News RSS.");
       return [];
@@ -146,9 +163,10 @@ export class WebSearchClient {
   /**
    * Parser ringan XML RSS item Google News tanpa dependensi library eksternal.
    */
-  public parseRssXml(xml: string, maxResults: number): WebSearchResult[] {
+  public parseRssXml(xml: string, maxResults: number, queryTokens?: string[]): WebSearchResult[] {
     const results: WebSearchResult[] = [];
-    const itemMatches = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, maxResults);
+    // Ambil lebih banyak kandidat terlebih dahulu agar setelah difilter relevansi tetap mencukupi maxResults
+    const itemMatches = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, maxResults * 3);
 
     for (const match of itemMatches) {
       const content = match[1] || "";
@@ -163,6 +181,15 @@ export class WebSearchClient {
       const cleanLink = this.cleanXmlText(rawLink);
 
       if (cleanTitle && cleanLink) {
+        // Filter relevansi: jika queryTokens diberikan, minimal satu kata kunci harus muncul di judul/penerbit
+        if (queryTokens && queryTokens.length > 0) {
+          const lowerCombined = `${cleanTitle} ${cleanPublisher}`.toLowerCase();
+          const isMatch = queryTokens.some((t) => lowerCombined.includes(t));
+          if (!isMatch) {
+            continue;
+          }
+        }
+
         results.push({
           title: cleanTitle,
           url: cleanLink,
@@ -171,6 +198,10 @@ export class WebSearchClient {
           publishedAt: pubDate,
           sourceType: "GOOGLE_NEWS",
         });
+
+        if (results.length >= maxResults) {
+          break;
+        }
       }
     }
 
