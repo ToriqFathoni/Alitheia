@@ -55,7 +55,7 @@ export class LlmClient {
   }
 
   private getGeminiModel(): string {
-    return (process.env["GEMINI_MODEL"] ?? env.GEMINI_MODEL ?? "gemini-3.5-flash-lite").trim();
+    return (process.env["GEMINI_MODEL"] ?? env.GEMINI_MODEL ?? "gemini-2.5-flash").trim();
   }
 
   private getNineRouterBaseUrl(): string {
@@ -112,42 +112,8 @@ export class LlmClient {
           },
         };
       } catch (geminiError: any) {
-        // Cek apakah 503 (high demand) atau 404 (model deprecated/unavailable)
-        const isSpikeOrUnavailable =
-          geminiError?.status === 503 ||
-          geminiError?.status === 404 ||
-          String(geminiError?.message || "").includes("503") ||
-          String(geminiError?.message || "").includes("404") ||
-          String(geminiError?.message || "").includes("high demand");
-
-        if (isSpikeOrUnavailable) {
-          const alternateModel =
-            activeGeminiModel === "gemini-3.5-flash-lite"
-              ? "gemini-3.5-flash"
-              : "gemini-3.5-flash-lite";
-
-          logger.warn(
-            { originalModel: activeGeminiModel, alternateModel, reason: geminiError?.message },
-            "[LlmClient] Gemini model mengalami beban tinggi (503/404). Mencoba model alternatif..."
-          );
-          try {
-            const altResult = await this.callGemini(prompt, alternateModel);
-            this.geminiCooldownUntil = 0;
-            this.lastProviderUsed = "gemini";
-
-            return {
-              result: altResult,
-              meta: {
-                provider: "gemini",
-                model: alternateModel,
-                durationMs: Date.now() - startTime,
-                recoveredFromLimit: wasInCooldown,
-              },
-            };
-          } catch (altError: any) {
-            logger.warn({ error: altError?.message }, "[LlmClient] Model Gemini alternatif juga gagal.");
-          }
-        }
+        const cooldownMs = geminiError?.retryDelayMs ?? this.getCooldownMs();
+        this.geminiCooldownUntil = Date.now() + cooldownMs;
 
         const isRateLimit =
           geminiError?.status === 429 ||
@@ -155,22 +121,15 @@ export class LlmClient {
           String(geminiError?.message || "").includes("RESOURCE_EXHAUSTED") ||
           String(geminiError?.message || "").includes("quota");
 
-        if (isRateLimit) {
-          const cooldownMs = geminiError?.retryDelayMs ?? this.getCooldownMs();
-          this.geminiCooldownUntil = Date.now() + cooldownMs;
-          logger.warn(
-            {
-              cooldownUntil: new Date(this.geminiCooldownUntil).toISOString(),
-              cooldownMs,
-            },
-            "[LlmClient] Gemini API terkena rate limit. Mengaktifkan failover ke 9Router..."
-          );
-        } else {
-          logger.warn(
-            { error: geminiError?.message || String(geminiError) },
-            "[LlmClient] Gemini API gagal merespons. Mencoba fallback ke 9Router..."
-          );
-        }
+        logger.warn(
+          {
+            isRateLimit,
+            cooldownUntil: new Date(this.geminiCooldownUntil).toISOString(),
+            cooldownMs,
+            error: geminiError?.message || String(geminiError),
+          },
+          "[LlmClient] Gemini API gagal/limit. Mengaktifkan cooldown dan mengalihkan failover ke 9Router..."
+        );
       }
     } else if (this.isGeminiInCooldown()) {
       logger.info(
@@ -242,9 +201,9 @@ export class LlmClient {
       geminiModel
     )}:generateContent?key=${encodeURIComponent(geminiKey)}`;
 
-    const timeoutMs = Number(process.env["EXTERNAL_TIMEOUT_MS"] ?? env.EXTERNAL_TIMEOUT_MS ?? 30000);
+    const timeoutMs = Number(process.env["EXTERNAL_TIMEOUT_MS"] ?? env.EXTERNAL_TIMEOUT_MS ?? 12000);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs > 0 ? timeoutMs : 30000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs > 0 ? timeoutMs : 12000);
 
     try {
       const response = await fetch(url, {
@@ -305,9 +264,9 @@ export class LlmClient {
     const baseUrl = this.getNineRouterBaseUrl().replace(/\/+$/, "");
     const url = `${baseUrl}/chat/completions`;
 
-    const timeoutMs = Number(process.env["EXTERNAL_TIMEOUT_MS"] ?? env.EXTERNAL_TIMEOUT_MS ?? 30000);
+    const timeoutMs = Number(process.env["EXTERNAL_TIMEOUT_MS"] ?? env.EXTERNAL_TIMEOUT_MS ?? 12000);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs > 0 ? timeoutMs : 30000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs > 0 ? timeoutMs : 12000);
 
     const nineRouterKey = this.getNineRouterKey();
     const headers: Record<string, string> = {

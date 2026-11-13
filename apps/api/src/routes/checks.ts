@@ -14,7 +14,12 @@ import {
 import type { CheckWithRelations } from '@alitheia/database';
 import { enqueueCheck } from '../services/queue.js';
 import { postRateLimiter, getRateLimiter } from '../middleware/rateLimiter.js';
-import { inspectUrl } from '../modules/ingestion/url-validator.js';
+import {
+  inspectUrl,
+  validateUrlFormat,
+  isPrivateOrReservedIp,
+} from '../modules/ingestion/url-validator.js';
+import { detectContentType } from '../modules/ingestion/content-type-detector.js';
 import { articleExtractor } from '../modules/ingestion/extractors/article.extractor.js';
 import { orchestratorService } from '../modules/orchestrator/orchestrator.service.js';
 import { verificationRepository } from '../modules/verification/verification.repository.js';
@@ -489,6 +494,30 @@ router.post(
       // ── 2. URL-based check (dengan Anti-SSRF dan Deteksi Platform) ──
       if (!url || typeof url !== 'string') {
         return res.status(400).json({ error: 'Mohon masukkan tautan (URL) atau teks yang ingin diverifikasi.' });
+      }
+
+      // Cek cache terlebih dahulu sebelum network probe (hemat latensi DNS + HTTP HEAD)
+      if (!isForced) {
+        const quickFormat = validateUrlFormat(url);
+        if (
+          quickFormat.valid &&
+          !isPrivateOrReservedIp(quickFormat.url.hostname) &&
+          !quickFormat.url.searchParams.has('srtk')
+        ) {
+          const quickDetection = detectContentType(quickFormat.url);
+          try {
+            const cached = await findRecentByNormalizedUrl(quickDetection.normalizedUrl, 7);
+            if (cached && cached.status === 'completed') {
+              return res.status(200).json({
+                id: cached.id,
+                status: 'completed',
+                cached: true,
+              });
+            }
+          } catch {
+            // Abaikan jika database offline
+          }
+        }
       }
 
       // Inspeksi format, Anti-SSRF, DNS, soft-404 YouTube, dan akun privat Instagram

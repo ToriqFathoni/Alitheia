@@ -41,7 +41,7 @@ export interface ProbeOptions {
   skipProbe?: boolean;
 }
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 4_000;
 const DEFAULT_MAX_REDIRECTS = 4;
 const DEFAULT_USER_AGENT =
   "Mozilla/5.0 (compatible; AlitheiaBot/1.0; +https://alitheia.dev; editorial-fact-check)";

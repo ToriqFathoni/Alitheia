@@ -12,7 +12,7 @@ export interface WebSearchResult {
 export class WebSearchClient {
   private timeoutMs: number;
 
-  constructor(timeoutMs = 6000) {
+  constructor(timeoutMs = 2500) {
     this.timeoutMs = timeoutMs;
   }
 

@@ -15,7 +15,7 @@ import TranscriptView from "../../components/TranscriptView";
 import OcrView from "../../components/OcrView";
 import LoadingScreen from "../../components/LoadingScreen";
 
-const POLL_MS = 3000;
+const POLL_MS = 1000;
 
 /** True once the check can no longer change, so polling should stop. */
 function isTerminal(status: string | undefined) {

@@ -183,5 +183,48 @@ describe("LlmClient Failover & Auto-Recovery", () => {
     expect(geminiCallCount).toBe(2); // Gemini dipanggil kembali!
     expect(client.isGeminiInCooldown()).toBe(false);
   });
+
+  it("harus langsung mengaktifkan cooldown dan fallback ke 9Router tanpa double-retry saat Gemini mengembalikan error 404/503", async () => {
+    let geminiCallCount = 0;
+
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("generativelanguage.googleapis.com")) {
+        geminiCallCount++;
+        return {
+          ok: false,
+          status: 404,
+          headers: new Headers(),
+          text: async () => JSON.stringify({ error: { message: "Model not found" } }),
+        };
+      }
+      if (url.includes("localhost:20128") || url.includes("/chat/completions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    label: 0,
+                    confidence: 0.9,
+                    explanation: "Fallback instan ke 9Router.",
+                    claims: [],
+                    suggestedSources: [],
+                  }),
+                },
+              },
+            ],
+          }),
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }) as any;
+
+    const response = await client.verifyWithLlm("Contoh berita uji 404");
+    expect(geminiCallCount).toBe(1);
+    expect(client.isGeminiInCooldown()).toBe(true);
+    expect(response.meta.provider).toBe("9router");
+    expect(response.result.label).toBe(0);
+  });
 });
 

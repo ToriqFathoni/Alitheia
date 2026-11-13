@@ -42,9 +42,9 @@ export const articleExtractor = {
     }
 
     try {
-      // Fetch dengan timeout 5 detik untuk mencegah hang
+      // Fetch dengan timeout 3.5 detik untuk mencegah hang
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
 
       const response = await fetch(url, {
         signal: controller.signal,
@@ -89,7 +89,7 @@ export const articleExtractor = {
       }
 
       return {
-        text: sanitizedText.slice(0, 10000), // Batasi panjang awal
+        text: sanitizedText.slice(0, 3500), // Batasi panjang awal
         title,
         sourceUrl: url,
         contentType: "ARTICLE",

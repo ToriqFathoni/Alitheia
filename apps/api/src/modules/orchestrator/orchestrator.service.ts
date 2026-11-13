@@ -111,10 +111,12 @@ Ringkasan: ${item.snippet}`;
     const title = content.title || "Berita Masukan";
     const sourceDomain = content.sourceUrl ? new URL(content.sourceUrl).hostname : "sumber.online";
 
-    // 1. Pastikan database data latih sudah ter-seed dari CSV jika tabel kosong
+    // 1. Pastikan database data latih sudah ter-seed dari CSV secara non-blocking
     if (!this.seedChecked) {
-      await ensureTrainingDataSeeded();
       this.seedChecked = true;
+      void ensureTrainingDataSeeded().catch((err) => {
+        logger.warn({ err }, "[OrchestratorService] Gagal background seeding data latih.");
+      });
     }
 
     // 2. Ambil contoh Few-Shot DB & Hasil Pencarian Web Terkini secara paralel
@@ -122,15 +124,15 @@ Ringkasan: ${item.snippet}`;
     let webResults: WebSearchResult[] = [];
 
     const [dbPromise, webPromise] = await Promise.allSettled([
-      findRelevantTrainingExamples(rawText, 8),
-      webSearchClient.search(title, rawText, 6),
+      findRelevantTrainingExamples(rawText, 4),
+      webSearchClient.search(title, rawText, 4),
     ]);
 
     if (dbPromise.status === "fulfilled") {
       fewShotExamples = dbPromise.value;
     } else {
       logger.info("[OrchestratorService] Database PostgreSQL offline. Mengambil contoh Few-Shot langsung dari memori Data_latih.csv.");
-      fewShotExamples = findRelevantTrainingExamplesFromCsv(rawText, 8);
+      fewShotExamples = findRelevantTrainingExamplesFromCsv(rawText, 4);
     }
 
     if (webPromise.status === "fulfilled") {
@@ -140,18 +142,19 @@ Ringkasan: ${item.snippet}`;
       logger.warn({ err: webPromise.reason }, "[OrchestratorService] Pencarian web gagal, lanjut tanpa web retrieval.");
     }
 
-    // 3. Susun prompt dengan template
+    // 3. Susun prompt dengan template (pangkas teks input ke 3500 karakter untuk menjaga latensi LLM)
     const template = this.getPromptTemplate();
     const formattedExamples = this.formatFewShotExamples(fewShotExamples);
     const formattedWeb = this.formatWebSearchResults(webResults);
     const currentDate = this.getCurrentDateFormatted();
+    const promptInputText = rawText.length > 3500 ? `${rawText.slice(0, 3500)}...` : rawText;
 
     const finalPrompt = template
       .replace("{{CURRENT_DATE}}", currentDate)
       .replace("{{WEB_SEARCH_RESULTS}}", formattedWeb)
       .replace("{{FEW_SHOT_EXAMPLES}}", formattedExamples)
       .replace("{{INPUT_TITLE}}", title)
-      .replace("{{INPUT_TEXT}}", rawText);
+      .replace("{{INPUT_TEXT}}", promptInputText);
 
     // 4. Panggil LLM (Gemini dengan failover ke 9Router dan auto-recovery)
     const { result: llmOutput, meta } = await llmClient.verifyWithLlm(finalPrompt);
@@ -308,32 +311,32 @@ Ringkasan: ${item.snippet}`;
       });
     }
 
-    // 7. Masukkan output ke database sebagai data latih baru dengan aturan FIFO (hanya jika inferensi LLM berhasil)
+    // 7. Masukkan output ke database sebagai data latih baru dengan aturan FIFO secara fire-and-forget
     if (meta.provider !== "fallback-rule") {
-      try {
-        const savedTraining = await insertTrainingDataFifo(
-          {
-            judul: title.slice(0, 300),
-            narasi: rawText,
-            label: llmOutput.label,
-            asalData: "PREDIKSI_LLM",
-            skorKepercayaan: confidenceScore,
-          },
-          env.MAX_TRAINING_DATA_ROWS
-        );
-
-        logger.info(
-          {
-            trainingId: savedTraining.id,
-            seqId: savedTraining.seqId,
-            label: savedTraining.label,
-            maxCapacity: env.MAX_TRAINING_DATA_ROWS,
-          },
-          "[OrchestratorService] Output verifikasi berhasil dimasukkan ke tabel data_latih_berita dengan mekanisme FIFO."
-        );
-      } catch (saveError) {
-        logger.error({ saveError }, "[OrchestratorService] Gagal menyimpan output ke tabel data_latih_berita.");
-      }
+      void insertTrainingDataFifo(
+        {
+          judul: title.slice(0, 300),
+          narasi: rawText,
+          label: llmOutput.label,
+          asalData: "PREDIKSI_LLM",
+          skorKepercayaan: confidenceScore,
+        },
+        env.MAX_TRAINING_DATA_ROWS
+      )
+        .then((savedTraining) => {
+          logger.info(
+            {
+              trainingId: savedTraining.id,
+              seqId: savedTraining.seqId,
+              label: savedTraining.label,
+              maxCapacity: env.MAX_TRAINING_DATA_ROWS,
+            },
+            "[OrchestratorService] Output verifikasi berhasil dimasukkan ke tabel data_latih_berita dengan mekanisme FIFO."
+          );
+        })
+        .catch((saveError) => {
+          logger.error({ saveError }, "[OrchestratorService] Gagal menyimpan output ke tabel data_latih_berita.");
+        });
     }
 
     return {

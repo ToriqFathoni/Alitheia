@@ -102,6 +102,24 @@ describe("Checks API Endpoints (POST/GET /api/v1/checks)", () => {
       expect(res.body.status).toBe("queued");
     });
 
+    it("mengembalikan 200 cached:true tanpa fetch jaringan ketika URL sudah ada di cache", async () => {
+      const cachedId = randomUUID();
+      vi.mocked(dbRepo.findRecentByNormalizedUrl).mockResolvedValue({
+        id: cachedId,
+        status: "completed",
+      } as any);
+
+      const res = await request(app)
+        .post("/api/v1/checks")
+        .send({ url: "https://news.detik.com/berita/d-123456/fakta-klarifikasi" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBe(cachedId);
+      expect(res.body.status).toBe("completed");
+      expect(res.body.cached).toBe(true);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
     it("menerima tautan artikel berita web publik dan mengembalikan 202 Accepted", async () => {
       const mockId = randomUUID();
       vi.mocked(dbRepo.findRecentByNormalizedUrl).mockResolvedValue(null);

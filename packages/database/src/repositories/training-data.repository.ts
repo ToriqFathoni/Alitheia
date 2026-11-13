@@ -154,7 +154,7 @@ export async function findRelevantTrainingExamples(
   let hoaxExamples: any[] = [];
   let factExamples: any[] = [];
 
-  // 1. Coba pencarian berbasis token
+  // 1. Coba pencarian berbasis token secara paralel
   if (uniqueTokens.length > 0) {
     const searchConditions = uniqueTokens.map((token) => ({
       OR: [
@@ -163,48 +163,55 @@ export async function findRelevantTrainingExamples(
       ],
     }));
 
-    hoaxExamples = await prisma.dataLatihBerita.findMany({
-      where: {
-        label: 1,
-        OR: searchConditions,
-      },
-      take: halfLimit,
-      orderBy: { seqId: "desc" },
-    });
-
-    factExamples = await prisma.dataLatihBerita.findMany({
-      where: {
-        label: 0,
-        OR: searchConditions,
-      },
-      take: limit - hoaxExamples.length,
-      orderBy: { seqId: "desc" },
-    });
+    [hoaxExamples, factExamples] = await Promise.all([
+      prisma.dataLatihBerita.findMany({
+        where: {
+          label: 1,
+          OR: searchConditions,
+        },
+        take: halfLimit,
+        orderBy: { seqId: "desc" },
+      }),
+      prisma.dataLatihBerita.findMany({
+        where: {
+          label: 0,
+          OR: searchConditions,
+        },
+        take: limit - halfLimit,
+        orderBy: { seqId: "desc" },
+      }),
+    ]);
   }
 
-  // 2. Jika hasil belum mencukupi, lengkapi dengan data latih representatif
-  if (hoaxExamples.length < halfLimit) {
-    const remainingHoax = await prisma.dataLatihBerita.findMany({
-      where: {
-        label: 1,
-        id: { notIn: hoaxExamples.map((h) => h.id) },
-      },
-      take: halfLimit - hoaxExamples.length,
-      orderBy: { seqId: "desc" },
-    });
+  // 2. Jika hasil belum mencukupi, lengkapi dengan data latih representatif secara paralel
+  const remainingHoaxNeeded = Math.max(0, halfLimit - hoaxExamples.length);
+  const remainingFactsNeeded = Math.max(0, limit - halfLimit - factExamples.length);
+
+  if (remainingHoaxNeeded > 0 || remainingFactsNeeded > 0) {
+    const [remainingHoax, remainingFacts] = await Promise.all([
+      remainingHoaxNeeded > 0
+        ? prisma.dataLatihBerita.findMany({
+            where: {
+              label: 1,
+              id: { notIn: hoaxExamples.map((h) => h.id) },
+            },
+            take: remainingHoaxNeeded,
+            orderBy: { seqId: "desc" },
+          })
+        : Promise.resolve([]),
+      remainingFactsNeeded > 0
+        ? prisma.dataLatihBerita.findMany({
+            where: {
+              label: 0,
+              id: { notIn: factExamples.map((f) => f.id) },
+            },
+            take: remainingFactsNeeded,
+            orderBy: { seqId: "desc" },
+          })
+        : Promise.resolve([]),
+    ]);
+
     hoaxExamples = [...hoaxExamples, ...remainingHoax];
-  }
-
-  const neededFacts = limit - hoaxExamples.length;
-  if (factExamples.length < neededFacts) {
-    const remainingFacts = await prisma.dataLatihBerita.findMany({
-      where: {
-        label: 0,
-        id: { notIn: factExamples.map((f) => f.id) },
-      },
-      take: neededFacts - factExamples.length,
-      orderBy: { seqId: "desc" },
-    });
     factExamples = [...factExamples, ...remainingFacts];
   }
 
