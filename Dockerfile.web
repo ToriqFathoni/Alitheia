@@ -35,6 +35,13 @@ RUN npm ci --include=optional && \
 # ---------- Stage 3: builder ----------
 FROM deps AS builder
 
+# NEXT_PUBLIC_* variables are inlined into the client bundle at BUILD time, so
+# they must be provided here (setting them only at container runtime has no
+# effect). The browser calls this URL, so it must be reachable from the user's
+# machine, not from inside the Docker network.
+ARG NEXT_PUBLIC_API_URL=http://localhost:5000
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
 # Copy all source code
 COPY packages/ ./packages/
 COPY apps/web/ ./apps/web/

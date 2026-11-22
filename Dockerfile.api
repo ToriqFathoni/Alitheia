@@ -81,7 +81,15 @@ COPY packages/shared-types/package.json ./packages/shared-types/package.json
 # Install production-only deps
 RUN npm ci --omit=dev
 
-# Copy Prisma schema + migrations (needed for migrate deploy at runtime)
+# Prisma CLI is a devDependency, so `npm ci --omit=dev` does not install it.
+# Install it in an isolated prefix (pinned to the project's Prisma 5.22) so the
+# container can sync the schema on startup without downloading anything at runtime.
+RUN mkdir -p /opt/prisma-cli && \
+    cd /opt/prisma-cli && \
+    npm init -y >/dev/null 2>&1 && \
+    npm install --no-audit --no-fund prisma@5.22.0
+
+# Copy Prisma schema + migrations (needed for `prisma db push` at startup)
 COPY packages/database/prisma/ ./packages/database/prisma/
 
 # Copy generated Prisma client from builder
@@ -94,7 +102,21 @@ COPY --from=builder /app/packages/config/ ./packages/config/
 COPY --from=builder /app/packages/database/dist/ ./packages/database/dist/
 COPY --from=builder /app/packages/shared-types/dist/ ./packages/shared-types/dist/
 
+# Runtime assets that tsc does not emit into dist/:
+#  - data/Data_latih.csv  -> training dataset (few-shot RAG + DB seeding)
+#  - hoax-detection.v1.md -> LLM prompt template, resolved by the orchestrator at
+#    <cwd>/apps/api/src/modules/orchestrator/prompts/
+COPY data/ ./data/
+COPY apps/api/src/modules/orchestrator/prompts/ ./apps/api/src/modules/orchestrator/prompts/
+
 EXPOSE 5000
 
-# Entrypoint: run migrations then start the API server
-CMD ["sh", "-c", "npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma && node apps/api/dist/index.js"]
+# Entrypoint: sync the DB schema, then start the API server.
+#
+# `db push` is used (same as the README dev flow) instead of `migrate deploy`:
+# the migration history does not create `data_latih_berita`, and a database
+# that was created with `db push` has no _prisma_migrations baseline, so
+# `migrate deploy` would fail with P3005. `db push` is idempotent and works for
+# both fresh and existing databases. If it fails, the container exits loudly
+# instead of silently falling back to the API's in-memory store.
+CMD ["sh", "-c", "/opt/prisma-cli/node_modules/.bin/prisma db push --skip-generate --schema=packages/database/prisma/schema.prisma && node apps/api/dist/index.js"]
