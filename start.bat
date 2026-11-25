@@ -7,6 +7,9 @@ rem Pemakaian:
 rem   start.bat       -> API + database + tunnel (frontend dipakai dari Vercel)
 rem   start.bat web   -> sama, ditambah frontend lokal di http://localhost:3001
 
+rem Alamat frontend di Vercel. Dipakai otomatis jika FRONTEND_URL belum ada di .env.
+set "DEFAULT_FRONTEND_URL=https://alitheia-orcin.vercel.app"
+
 echo ==============================================
 echo   Alitheia - backend + Cloudflare Tunnel
 echo ==============================================
@@ -42,17 +45,9 @@ if not exist .env (
 rem --- .env: alamat frontend di Vercel (untuk CORS) ---------------------------
 findstr /b /r /c:"FRONTEND_URL=." .env >nul 2>&1
 if errorlevel 1 (
-  echo Masukkan alamat frontend di Vercel, contoh: https://alitheia.vercel.app
-  set "FURL="
-  set /p FURL=URL frontend: 
-  if not defined FURL (
-    echo [GAGAL] URL frontend kosong. Dibatalkan.
-    pause
-    exit /b 1
-  )
-  if "!FURL:~-1!"=="/" set "FURL=!FURL:~0,-1!"
   >> .env echo.
-  >> .env echo FRONTEND_URL=!FURL!
+  >> .env echo FRONTEND_URL=!DEFAULT_FRONTEND_URL!
+  echo FRONTEND_URL diisi otomatis: !DEFAULT_FRONTEND_URL!
   echo.
 )
 

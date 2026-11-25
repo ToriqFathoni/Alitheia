@@ -10,6 +10,9 @@ cd "$(dirname "$0")"
 WITH_WEB=0
 [ "${1:-}" = "web" ] && WITH_WEB=1
 
+# Alamat frontend di Vercel. Dipakai otomatis jika FRONTEND_URL belum ada di .env.
+DEFAULT_FRONTEND_URL="https://alitheia-orcin.vercel.app"
+
 if ! docker info >/dev/null 2>&1; then
   echo "[GAGAL] Docker belum berjalan. Nyalakan Docker lalu coba lagi."
   exit 1
@@ -30,15 +33,8 @@ fi
 
 # --- .env: alamat frontend di Vercel (untuk CORS) -------------------------------
 if ! grep -q '^FRONTEND_URL=.\+' .env; then
-  echo
-  echo "Masukkan alamat frontend di Vercel, contoh: https://alitheia.vercel.app"
-  read -r -p "URL frontend: " FURL
-  FURL="${FURL%/}"
-  if [ -z "$FURL" ]; then
-    echo "[GAGAL] URL frontend kosong."
-    exit 1
-  fi
-  printf '\nFRONTEND_URL=%s\n' "$FURL" >> .env
+  printf '\nFRONTEND_URL=%s\n' "$DEFAULT_FRONTEND_URL" >> .env
+  echo "FRONTEND_URL diisi otomatis: $DEFAULT_FRONTEND_URL"
 fi
 
 FRONTEND_URL="$(grep '^FRONTEND_URL=' .env | tail -n1 | cut -d= -f2- | tr -d '"' | tr -d '\r')"
