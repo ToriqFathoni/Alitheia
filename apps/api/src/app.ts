@@ -13,6 +13,10 @@ verificationWorker.init();
 
 export const app = express();
 
+// Di belakang Cloudflare Tunnel, IP klien ada di header X-Forwarded-For. Tanpa ini
+// semua pengguna terlihat satu IP dan berbagi satu kuota rate limit.
+app.set("trust proxy", 1);
+
 const allowedOrigins = new Set([
   ...env.CORS_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean),
   "http://localhost:3000",

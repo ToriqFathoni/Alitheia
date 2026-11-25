@@ -1,4 +1,48 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const DEFAULT_API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const API_BASE_STORAGE_KEY = 'alitheia_api_base';
+
+/**
+ * Override alamat backend saat runtime, dipakai ketika backend berjalan lewat
+ * Cloudflare quick tunnel yang URL-nya berubah tiap dijalankan. Tautan seperti
+ * https://<frontend>/?api=https://xxxx.trycloudflare.com menyimpan alamat itu di
+ * browser. Hanya host trycloudflare.com dan localhost yang diterima agar tautan
+ * berbahaya tidak bisa mengarahkan frontend ke server sembarangan.
+ */
+function isAllowedApiOverride(url: URL): boolean {
+  if (url.protocol === 'https:') {
+    return url.hostname === 'trycloudflare.com' || url.hostname.endsWith('.trycloudflare.com');
+  }
+  return (
+    url.protocol === 'http:' &&
+    (url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+  );
+}
+
+function resolveApiBase(): string {
+  if (typeof window === 'undefined') return DEFAULT_API_BASE;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get('api');
+    if (fromQuery === 'reset') {
+      window.localStorage.removeItem(API_BASE_STORAGE_KEY);
+    } else if (fromQuery) {
+      const parsed = new URL(fromQuery);
+      if (isAllowedApiOverride(parsed)) {
+        window.localStorage.setItem(API_BASE_STORAGE_KEY, parsed.origin);
+        return parsed.origin;
+      }
+    }
+    const stored = window.localStorage.getItem(API_BASE_STORAGE_KEY);
+    if (stored && isAllowedApiOverride(new URL(stored))) return stored;
+  } catch {
+    // localStorage tidak tersedia atau URL tidak valid: pakai default.
+  }
+  return DEFAULT_API_BASE;
+}
+
+// Dievaluasi saat modul dimuat di browser, jadi parameter ?api= langsung tersimpan
+// walau pengguna berpindah halaman sebelum request pertama.
+const API_BASE = resolveApiBase();
 
 export interface CheckStep {
   id?: number | string;

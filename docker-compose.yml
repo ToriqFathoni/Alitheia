@@ -56,7 +56,7 @@ services:
       DATABASE_URL: "postgresql://alitheia:alitheia_secret@postgres:5432/alitheia?schema=public"
       REDIS_URL: "redis://redis:6379"
       JWT_SECRET: "${JWT_SECRET:-alitheia-dev-secret-key-change-in-production-min-32-chars}"
-      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000},http://localhost:3001,http://localhost:${WEB_HOST_PORT:-3001},http://127.0.0.1:${WEB_HOST_PORT:-3001}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:3000},http://localhost:3001,http://localhost:${WEB_HOST_PORT:-3001},http://127.0.0.1:${WEB_HOST_PORT:-3001},${FRONTEND_URL:-}"
       TRAINING_CSV_PATH: "/app/data/Data_latih.csv"
       # `localhost` inside the container is the container itself. To reach a 9Router
       # running on the host, use host.docker.internal (mapped below for Linux).
@@ -116,6 +116,36 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  # ─────────────────── Cloudflare Tunnel ───────────────────
+  # Membuat alamat HTTPS publik ke API lokal supaya frontend di Vercel bisa memanggilnya.
+  # cloudflared berjalan sebagai container, jadi tidak perlu diinstal di komputer.
+  # Dijalankan oleh start.sh / start.bat, atau manual:
+  #   docker compose --profile tunnel up -d tunnel
+
+  # Quick tunnel: tanpa akun, URL acak *.trycloudflare.com yang berubah tiap start.
+  tunnel:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:latest
+    container_name: alitheia-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://api:5000
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Named tunnel: URL tetap pada domain sendiri (perlu akun Cloudflare + domain).
+  # Aktif jika CLOUDFLARE_TUNNEL_TOKEN diisi di .env. Di dashboard Cloudflare, arahkan
+  # Public Hostname ke service http://api:5000.
+  tunnel-named:
+    profiles: ["tunnel-named"]
+    image: cloudflare/cloudflared:latest
+    container_name: alitheia-tunnel-named
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      api:
         condition: service_healthy
 
   web:

@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-docker compose down
+docker compose --profile tunnel --profile tunnel-named --profile worker down
 echo.
 echo Semua container Alitheia dimatikan. Data tetap tersimpan.
 pause
