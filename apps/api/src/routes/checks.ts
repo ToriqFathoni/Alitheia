@@ -10,14 +10,18 @@ import {
   getCheckDetail,
   listChecks,
   deleteCheck,
+  countTrainingData,
+  prisma,
 } from '@alitheia/database';
 import type { CheckWithRelations } from '@alitheia/database';
 import { enqueueCheck } from '../services/queue.js';
 import { postRateLimiter, getRateLimiter } from '../middleware/rateLimiter.js';
 import { inspectUrl } from '../modules/ingestion/url-validator.js';
 import { articleExtractor } from '../modules/ingestion/extractors/article.extractor.js';
+import { documentExtractor } from '../modules/ingestion/extractors/document.extractor.js';
 import { orchestratorService } from '../modules/orchestrator/orchestrator.service.js';
 import { verificationRepository } from '../modules/verification/verification.repository.js';
+import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 
 import { randomUUID } from 'node:crypto';
@@ -681,23 +685,60 @@ router.get(
         typeof req.query.verdict === 'string' ? req.query.verdict : undefined;
       const platform =
         typeof req.query.platform === 'string' ? req.query.platform : undefined;
+      const inputType =
+        typeof req.query.input_type === 'string' ? req.query.input_type : undefined;
       const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+
+      const safePage = Number.isInteger(page) && page > 0 ? page : 1;
+      const safePageSize = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 10;
 
       let listData: any[] = [];
       let total = 0;
       try {
         const result = await listChecks({
-          page: Number.isInteger(page) && page > 0 ? page : 1,
-          pageSize: Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 10,
+          page: safePage,
+          pageSize: safePageSize,
           verdict,
           platform,
+          inputType,
           q,
         });
         listData = result.data;
         total = result.total;
       } catch {
-        listData = Array.from(inMemoryChecks.values());
-        total = listData.length;
+        let filtered = Array.from(inMemoryChecks.values()).sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        if (inputType) {
+          filtered = filtered.filter(
+            (c) => (c.inputType || '').toLowerCase() === inputType.toLowerCase()
+          );
+        } else if (platform) {
+          const pLower = platform.toLowerCase();
+          if (pLower === 'url' || pLower === 'text' || pLower === 'document') {
+            filtered = filtered.filter((c) => (c.inputType || '').toLowerCase() === pLower);
+          } else {
+            filtered = filtered.filter((c) => (c.platform || '').toLowerCase() === pLower);
+          }
+        }
+        if (verdict) {
+          filtered = filtered.filter(
+            (c) => (c.analysisResult?.verdict || '').toLowerCase() === verdict.toLowerCase()
+          );
+        }
+        if (q && q.trim()) {
+          const ql = q.trim().toLowerCase();
+          filtered = filtered.filter(
+            (c) =>
+              (c.inputText || '').toLowerCase().includes(ql) ||
+              (c.sourceUrl || '').toLowerCase().includes(ql) ||
+              (c.analysisResult?.summary || '').toLowerCase().includes(ql) ||
+              (c.analysisResult?.explanation || '').toLowerCase().includes(ql)
+          );
+        }
+        total = filtered.length;
+        const start = (safePage - 1) * safePageSize;
+        listData = filtered.slice(start, start + safePageSize);
       }
 
       return res.json({
@@ -792,6 +833,11 @@ router.delete(
         return res.status(400).json({ error: 'Check ID is required' });
       }
 
+      if (inMemoryChecks.has(id)) {
+        inMemoryChecks.delete(id);
+        return res.status(204).send();
+      }
+
       const check = await getCheckDetail(id);
       if (!check) {
         return res.status(404).json({ error: 'Check not found' });
@@ -803,6 +849,354 @@ router.delete(
       if (err?.code === 'P2025' || err?.code === 'P2023') {
         return res.status(404).json({ error: 'Check not found' });
       }
+      return next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/v1/checks/upload
+ * Mengunggah dokumen (.txt, .md, .csv, .docx, .pdf berbasis teks) untuk diverifikasi AI
+ */
+router.post(
+  '/api/v1/checks/upload',
+  postRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { fileName, mimeType, contentBase64, textContent } = (req.body ?? {}) as {
+        fileName?: string;
+        mimeType?: string;
+        contentBase64?: string;
+        textContent?: string;
+      };
+
+      const extracted = documentExtractor.extractFromUpload({
+        fileName: fileName || '',
+        mimeType,
+        contentBase64,
+        textContent,
+      });
+
+      const check = await safeCreateCheck({
+        sourceUrl: '',
+        normalizedUrl: '',
+        inputText: extracted.text,
+        inputType: 'document',
+        platform: 'Document',
+      });
+
+      await safeAddCheckEvent(check.id, 'download', 'succeeded', `Berkas "${fileName}" berhasil diterima.`);
+      await safeAddCheckEvent(
+        check.id,
+        'extract',
+        'succeeded',
+        `Teks diekstrak dari dokumen (${extracted.text.length} karakter).`
+      );
+
+      setImmediate(async () => {
+        try {
+          await safeUpdateCheckStatus(check.id, 'analyzing', 'analyzing');
+          await safeAddCheckEvent(check.id, 'analyze', 'started', 'Menganalisis klaim dari dokumen...');
+
+          const result = await orchestratorService.verify(extracted);
+
+          const sources = result.claims.flatMap((c) =>
+            c.bukti.map((b) => ({
+              title: b.judulRujukan || c.subjek || 'Sumber Rujukan',
+              url: b.urlRujukan || 'https://alitheia.id/knowledge-base',
+              publisher:
+                b.penerbit ||
+                (b.urlRujukan ? new URL(b.urlRujukan).hostname : 'Pemeriksa Fakta'),
+              stance: determineSourceStance(
+                b.judulRujukan || '',
+                b.kutipan || '',
+                c.prediction.hasilAkhir
+              ),
+              snippet: b.kutipan || '',
+            }))
+          );
+
+          const claimsForDb = result.claims.map((c) => ({
+            text: c.kalimatKlaim,
+            verdict:
+              c.prediction.hasilAkhir === 'BENAR'
+                ? 'True'
+                : c.prediction.hasilAkhir === 'SALAH'
+                  ? 'False'
+                  : 'Unverified',
+            explanation: c.prediction.explanation || 'Klaim diuji terhadap rujukan independen.',
+            source_ids: sources.map((_, sIdx) => `src-${sIdx + 1}`),
+          }));
+
+          const isAllBenar = result.claims.every((c) => c.prediction.hasilAkhir === 'BENAR');
+          const isAnySalah = result.claims.some((c) => c.prediction.hasilAkhir === 'SALAH');
+          const overallVerdict = isAllBenar ? 'True' : isAnySalah ? 'False' : 'Unverified';
+
+          await safeSaveAnalysis(
+            check.id,
+            {
+              verdict: overallVerdict,
+              confidence:
+                result.claims.length > 0 && result.claims[0]
+                  ? result.claims[0].prediction.skorKepercayaan
+                  : 0.85,
+              summary: `Dianalisis dari dokumen ${fileName} (${result.claims.length} klaim).`,
+              explanation: result.claims[0]?.prediction.explanation || 'Verifikasi dokumen selesai.',
+              claims: claimsForDb,
+              modelVersion: 'alitheia-orchestrator-v1',
+            },
+            sources
+          );
+
+          await safeAddCheckEvent(check.id, 'analyze', 'succeeded', 'Analisis klaim dokumen selesai.');
+          await safeCompleteCheck(check.id);
+        } catch (err: unknown) {
+          logger.error({ err, checkId: check.id }, '[ChecksRoute] Gagal menganalisis dokumen');
+          await safeUpdateCheckStatus(check.id, 'failed', 'failed', {
+            code: 'DOCUMENT_ANALYSIS_FAILED',
+            message: err instanceof Error ? err.message : String(err),
+          });
+          await safeAddCheckEvent(
+            check.id,
+            'analyze',
+            'failed',
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+      });
+
+      return res.status(202).json({
+        id: check.id,
+        status: 'queued',
+        cached: false,
+      });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+/**
+ * POST /api/v1/checks/:id/feedback
+ * Menyimpan umpan balik pengguna (akurat / keliru) atas hasil pemeriksaan
+ */
+router.post(
+  '/api/v1/checks/:id/feedback',
+  postRateLimiter,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { id } = req.params;
+      const { rating, comment } = (req.body ?? {}) as {
+        rating?: string;
+        comment?: string;
+      };
+
+      if (!id || typeof id !== 'string') {
+        return res.status(400).json({ error: 'Check ID tidak valid.' });
+      }
+      if (rating !== 'accurate' && rating !== 'inaccurate') {
+        return res.status(400).json({
+          error: 'Nilai rating wajib "accurate" atau "inaccurate".',
+        });
+      }
+
+      const trimmedComment = typeof comment === 'string' ? comment.trim().slice(0, 1000) : '';
+
+      let exists = inMemoryChecks.has(id);
+      if (!exists) {
+        try {
+          const found = await getCheckDetail(id);
+          exists = Boolean(found);
+        } catch {
+          // DB offline
+        }
+      }
+
+      if (!exists) {
+        return res.status(404).json({ error: 'Check not found' });
+      }
+
+      const detail = JSON.stringify({
+        rating,
+        comment: trimmedComment,
+        submittedAt: new Date().toISOString(),
+      });
+
+      await safeAddCheckEvent(id, 'feedback', rating, detail);
+
+      return res.status(201).json({
+        success: true,
+        check_id: id,
+        rating,
+        comment: trimmedComment,
+      });
+    } catch (err) {
+      return next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/v1/admin/overview
+ * Ringkasan analitik, umpan balik pengguna, dan log kesalahan untuk Panel Auditor
+ */
+router.get(
+  '/api/v1/admin/overview',
+  getRateLimiter,
+  async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      let totalChecks = 0;
+      let completedChecks = 0;
+      let failedChecks = 0;
+      let trueCount = 0;
+      let falseCount = 0;
+      let unverifiedCount = 0;
+      let trainingDataCount = 0;
+      let errors: Array<{
+        id: string;
+        source_url: string;
+        input_type: string;
+        error_code: string | null;
+        error_message: string | null;
+        created_at: string;
+      }> = [];
+      let feedback: Array<{
+        id: string | number;
+        check_id: string;
+        rating: string;
+        comment: string;
+        created_at: string;
+      }> = [];
+
+      try {
+        const [
+          dbTotal,
+          dbCompleted,
+          dbFailed,
+          dbTrue,
+          dbFalse,
+          dbUnverified,
+          dbFailedRows,
+          dbFeedbackEvents,
+          dbTrainingCount,
+        ] = await Promise.all([
+          prisma.check.count(),
+          prisma.check.count({ where: { status: 'completed' } }),
+          prisma.check.count({ where: { status: 'failed' } }),
+          prisma.analysisResult.count({ where: { verdict: { equals: 'True', mode: 'insensitive' } } }),
+          prisma.analysisResult.count({ where: { verdict: { equals: 'False', mode: 'insensitive' } } }),
+          prisma.analysisResult.count({ where: { verdict: { equals: 'Unverified', mode: 'insensitive' } } }),
+          prisma.check.findMany({
+            where: { status: 'failed' },
+            orderBy: { createdAt: 'desc' },
+            take: 25,
+          }),
+          prisma.checkEvent.findMany({
+            where: { stage: 'feedback' },
+            orderBy: { createdAt: 'desc' },
+            take: 50,
+          }),
+          countTrainingData().catch(() => 0),
+        ]);
+
+        totalChecks = dbTotal;
+        completedChecks = dbCompleted;
+        failedChecks = dbFailed;
+        trueCount = dbTrue;
+        falseCount = dbFalse;
+        unverifiedCount = dbUnverified;
+        trainingDataCount = dbTrainingCount;
+
+        errors = dbFailedRows.map((row) => ({
+          id: row.id,
+          source_url: row.sourceUrl || row.inputText?.slice(0, 80) || '(tanpa sumber)',
+          input_type: row.inputType,
+          error_code: row.errorCode,
+          error_message: row.errorMessage,
+          created_at: row.createdAt.toISOString(),
+        }));
+
+        feedback = dbFeedbackEvents.map((ev) => {
+          let comment = '';
+          try {
+            const parsed = JSON.parse(ev.detail || '{}');
+            comment = typeof parsed.comment === 'string' ? parsed.comment : '';
+          } catch {
+            comment = ev.detail || '';
+          }
+          return {
+            id: ev.id,
+            check_id: ev.checkId,
+            rating: ev.status,
+            comment,
+            created_at: ev.createdAt.toISOString(),
+          };
+        });
+      } catch {
+        // Fallback ke inMemoryChecks ketika database offline
+        const all = Array.from(inMemoryChecks.values());
+        totalChecks = all.length;
+        completedChecks = all.filter((c) => c.status === 'completed').length;
+        failedChecks = all.filter((c) => c.status === 'failed').length;
+        trueCount = all.filter((c) => (c.analysisResult?.verdict || '').toLowerCase() === 'true').length;
+        falseCount = all.filter((c) => (c.analysisResult?.verdict || '').toLowerCase() === 'false').length;
+        unverifiedCount = all.filter(
+          (c) => (c.analysisResult?.verdict || '').toLowerCase() === 'unverified'
+        ).length;
+
+        errors = all
+          .filter((c) => c.status === 'failed')
+          .map((row) => ({
+            id: row.id,
+            source_url: row.sourceUrl || row.inputText?.slice(0, 80) || '(tanpa sumber)',
+            input_type: row.inputType || 'url',
+            error_code: row.errorCode || null,
+            error_message: row.errorMessage || null,
+            created_at:
+              row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+          }));
+
+        feedback = all.flatMap((c) =>
+          (c.events || [])
+            .filter((ev: any) => ev.stage === 'feedback')
+            .map((ev: any) => {
+              let comment = '';
+              try {
+                const parsed = JSON.parse(ev.detail || '{}');
+                comment = typeof parsed.comment === 'string' ? parsed.comment : '';
+              } catch {
+                comment = ev.detail || '';
+              }
+              return {
+                id: ev.id,
+                check_id: c.id,
+                rating: ev.status,
+                comment,
+                created_at:
+                  ev.createdAt instanceof Date ? ev.createdAt.toISOString() : String(ev.createdAt),
+              };
+            })
+        );
+      }
+
+      return res.json({
+        totals: {
+          checks: totalChecks,
+          completed: completedChecks,
+          failed: failedChecks,
+          processing: Math.max(0, totalChecks - completedChecks - failedChecks),
+          verdicts: {
+            true: trueCount,
+            false: falseCount,
+            unverified: unverifiedCount,
+          },
+          training_data_rows: trainingDataCount,
+          training_data_max: env.MAX_TRAINING_DATA_ROWS,
+        },
+        errors,
+        feedback,
+      });
+    } catch (err) {
       return next(err);
     }
   }

@@ -39,7 +39,7 @@ app.use(
   })
 );
 
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "6mb" }));
 app.use(requestIdMiddleware);
 
 const healthHandler = (_req: Request, res: Response) => {

@@ -3,12 +3,11 @@
 import { Suspense, useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getCheck, submitCheck } from "../../lib/api";
+import { getCheck, submitCheck, submitFeedback } from "../../lib/api";
 import type { CheckDetail } from "../../lib/api";
 import BrutalistNavbar from "../../components/BrutalistNavbar";
 import PlatformBadge from "../../components/PlatformBadge";
 import VerdictCard from "../../components/VerdictCard";
-import ProgressStepper from "../../components/ProgressStepper";
 import ClaimsList from "../../components/ClaimsList";
 import SourcesList from "../../components/SourcesList";
 import TranscriptView from "../../components/TranscriptView";
@@ -41,6 +40,80 @@ function CheckDetailContent() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [rechecking, setRechecking] = useState(false);
+  const [feedbackRating, setFeedbackRating] = useState<"accurate" | "inaccurate" | null>(null);
+  const [feedbackComment, setFeedbackComment] = useState("");
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState<string | null>(null);
+
+  const handleDownloadJson = () => {
+    if (!check) return;
+    const blob = new Blob([JSON.stringify(check, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `alitheia-report-${check.id.slice(0, 8)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadCsv = () => {
+    if (!check) return;
+    const escapeCsv = (val: unknown) => {
+      const s = String(val ?? "").replace(/"/g, '""');
+      return `"${s}"`;
+    };
+    const header = ["Check ID", "Verdict", "Confidence", "Claim", "Claim Verdict", "Explanation", "Source URLs"];
+    const sourceUrls = (check.result?.sources || []).map((s) => s.url).join(" | ");
+    const claims = check.result?.claims || [];
+    const rows =
+      claims.length > 0
+        ? claims.map((c) => [
+            check.id,
+            check.result?.verdict || "",
+            check.result?.confidence ?? "",
+            c.text,
+            c.verdict,
+            c.explanation,
+            sourceUrls,
+          ])
+        : [
+            [
+              check.id,
+              check.result?.verdict || "",
+              check.result?.confidence ?? "",
+              check.input_text || check.source_url,
+              check.result?.verdict || "",
+              check.result?.explanation || "",
+              sourceUrls,
+            ],
+          ];
+    const csv = [header, ...rows].map((r) => r.map(escapeCsv).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `alitheia-report-${check.id.slice(0, 8)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSendFeedback = async (rating: "accurate" | "inaccurate") => {
+    if (!id || feedbackSubmitting) return;
+    setFeedbackRating(rating);
+    setFeedbackSubmitting(true);
+    try {
+      await submitFeedback(id, rating, feedbackComment);
+      setFeedbackSent(
+        rating === "accurate"
+          ? "Terima kasih! Penilaian 'Akurat' Anda telah dicatat untuk evaluasi sistem."
+          : "Terima kasih! Laporan 'Keliru' Anda telah dicatat untuk ditinjau auditor."
+      );
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Gagal mengirim umpan balik");
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -260,9 +333,69 @@ function CheckDetailContent() {
                   {check.transcript && <TranscriptView transcript={check.transcript} />}
                   {check.ocr && check.ocr.length > 0 && <OcrView ocrResults={check.ocr} />}
 
+                  <section className="panel p-5" aria-label="Umpan balik pengguna">
+                    <span className="eyebrow">Umpan Balik</span>
+                    <h3 className="display-title mt-1 text-base">Apakah hasil analisis ini akurat?</h3>
+                    {feedbackSent ? (
+                      <p className="mt-2 text-sm font-semibold" style={{ color: "var(--verdict-true)" }}>
+                        {feedbackSent}
+                      </p>
+                    ) : (
+                      <>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={feedbackSubmitting}
+                            onClick={() => handleSendFeedback("accurate")}
+                            className="btn-secondary text-xs"
+                            style={{
+                              minHeight: "40px",
+                              background: feedbackRating === "accurate" ? "var(--verdict-true)" : undefined,
+                              color: feedbackRating === "accurate" ? "#fff" : undefined,
+                            }}
+                          >
+                            ✓ Akurat
+                          </button>
+                          <button
+                            type="button"
+                            disabled={feedbackSubmitting}
+                            onClick={() => handleSendFeedback("inaccurate")}
+                            className="btn-secondary text-xs"
+                            style={{
+                              minHeight: "40px",
+                              background: feedbackRating === "inaccurate" ? "var(--verdict-false)" : undefined,
+                              color: feedbackRating === "inaccurate" ? "#fff" : undefined,
+                            }}
+                          >
+                            ✕ Keliru / Perlu Tinjauan
+                          </button>
+                        </div>
+                        <label htmlFor="feedback-comment" className="sr-only">Catatan tambahan</label>
+                        <input
+                          id="feedback-comment"
+                          type="text"
+                          value={feedbackComment}
+                          onChange={(e) => setFeedbackComment(e.target.value)}
+                          placeholder="Catatan opsional untuk auditor (tulis sebelum klik tombol di atas)..."
+                          className="mt-3 w-full px-3 py-2 text-xs"
+                          style={{ border: "2px solid var(--line)", background: "var(--sunken)" }}
+                        />
+                      </>
+                    )}
+                  </section>
+
                   <div className="panel result-actions">
                     <Link href="/" className="btn-secondary">Periksa yang lain</Link>
                     <div className="flex flex-wrap items-center gap-2">
+                      <button type="button" onClick={handleDownloadJson} className="btn-secondary text-xs">
+                        Ekspor JSON
+                      </button>
+                      <button type="button" onClick={handleDownloadCsv} className="btn-secondary text-xs">
+                        Ekspor CSV
+                      </button>
+                      <button type="button" onClick={() => window.print()} className="btn-secondary text-xs">
+                        Cetak / PDF
+                      </button>
                       <button type="button" onClick={handleCopyLink} className="btn-secondary">
                         {copied ? "Tersalin!" : "Salin tautan"}
                       </button>

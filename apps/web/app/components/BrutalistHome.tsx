@@ -3,11 +3,25 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import BrutalistNavbar from "./BrutalistNavbar";
-import { submitCheck, submitTextCheck } from "../lib/api";
+import { submitCheck, submitDocumentCheck, submitTextCheck } from "../lib/api";
 
 const MAX_WORDS = 15000;
+const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const SAMPLE_TEXT =
   "Eastbridge's electric bus pilot cut average commute times by 20% in its first year, and the city says ridership doubled across all routes since launch.";
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const base64 = result.includes(",") ? result.split(",").pop() || "" : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(new Error("Gagal membaca berkas dari perangkat."));
+    reader.readAsDataURL(file);
+  });
+}
 
 type Mark = "text" | "link" | "upload";
 
@@ -20,7 +34,7 @@ export default function BrutalistHome() {
   const router = useRouter();
   const [text, setText] = useState("");
   const [url, setUrl] = useState("");
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
@@ -35,6 +49,28 @@ export default function BrutalistHome() {
 
   const handleSubmit = async () => {
     setMessage(null);
+
+    if (selectedFile) {
+      if (selectedFile.size > MAX_FILE_BYTES) {
+        fail("Ukuran berkas melebihi batas maksimal 4 MB.");
+        return;
+      }
+      setSubmitting(true);
+      try {
+        const contentBase64 = await readFileAsBase64(selectedFile);
+        const result = await submitDocumentCheck({
+          fileName: selectedFile.name,
+          mimeType: selectedFile.type || undefined,
+          contentBase64,
+        });
+        if (!result.id) throw new Error("Respons server tidak valid");
+        router.push(`/checks/${result.id}`);
+      } catch (error: unknown) {
+        fail(error instanceof Error ? error.message : "Gagal memeriksa dokumen");
+        setSubmitting(false);
+      }
+      return;
+    }
 
     // Link takes precedence: if both fields hold content the user most likely
     // pasted a URL last, and a URL check is the more specific request.
@@ -73,7 +109,7 @@ export default function BrutalistHome() {
       return;
     }
 
-    fail("Tempel teks atau masukkan link terlebih dahulu.");
+    fail("Tempel teks, masukkan link, atau pilih dokumen terlebih dahulu.");
   };
 
   return (
@@ -135,21 +171,38 @@ export default function BrutalistHome() {
                 <MarkIcon type="upload" />
                 <b>3 · Unggah</b>
               </div>
-              {/* Upload is not wired to the API yet, so it is presented as
-                  unavailable rather than silently accepting a file. */}
-              <div className="intake-upload" aria-disabled="true">
-                <span>
-                  {fileName ?? "Unggah dokumen belum tersedia — gunakan teks atau link"}
+              <label htmlFor="check-file" className="intake-upload" style={{ cursor: "pointer" }}>
+                <span className="truncate">
+                  {selectedFile
+                    ? `${selectedFile.name} (${Math.max(1, Math.round(selectedFile.size / 1024))} KB)`
+                    : "Pilih dokumen (.txt, .md, .csv, .docx, .pdf) — maks 4 MB"}
                 </span>
-                <span className="intake-file-button" aria-hidden="true">Segera hadir</span>
+                <span className="intake-file-button" aria-hidden="true">
+                  {selectedFile ? "Ganti" : "Pilih file"}
+                </span>
                 <input
                   id="check-file"
                   type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.txt"
-                  disabled
-                  onChange={(event) => setFileName(event.target.files?.[0]?.name ?? null)}
+                  accept=".txt,.md,.csv,.docx,.pdf,.html"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    setSelectedFile(file);
+                    setMessage(null);
+                  }}
                 />
-              </div>
+              </label>
+              {selectedFile && (
+                <div className="intake-card-meta flex items-center justify-between">
+                  <span>Siap dianalisis sebagai dokumen</span>
+                  <button
+                    type="button"
+                    className="underline font-bold"
+                    onClick={() => setSelectedFile(null)}
+                  >
+                    Batalkan
+                  </button>
+                </div>
+              )}
             </div>
 
             {message && (

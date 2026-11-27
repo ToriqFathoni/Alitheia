@@ -229,6 +229,7 @@ export async function listChecks(options: {
   pageSize?: number;
   verdict?: string;
   platform?: string;
+  inputType?: string;
   q?: string;
 } = {}): Promise<{
   data: (Check & { analysisResult: { verdict: string } | null })[];
@@ -242,11 +243,24 @@ export async function listChecks(options: {
 
   const where: Prisma.CheckWhereInput = {};
 
-  if (options.platform) {
-    where.platform = {
-      equals: options.platform,
+  if (options.inputType) {
+    where.inputType = {
+      equals: options.inputType,
       mode: 'insensitive',
     };
+  } else if (options.platform) {
+    const pLower = options.platform.toLowerCase().trim();
+    if (pLower === 'url' || pLower === 'text' || pLower === 'document') {
+      where.inputType = {
+        equals: pLower,
+        mode: 'insensitive',
+      };
+    } else {
+      where.platform = {
+        equals: options.platform,
+        mode: 'insensitive',
+      };
+    }
   }
 
   if (options.verdict) {
@@ -262,6 +276,7 @@ export async function listChecks(options: {
     const q = options.q.trim();
     if (q) {
       where.OR = [
+        { inputText: { contains: q, mode: 'insensitive' } },
         { sourceUrl: { contains: q, mode: 'insensitive' } },
         { normalizedUrl: { contains: q, mode: 'insensitive' } },
         { analysisResult: { summary: { contains: q, mode: 'insensitive' } } },

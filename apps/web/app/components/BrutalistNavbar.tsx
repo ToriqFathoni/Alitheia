@@ -7,6 +7,8 @@ import { Suspense } from "react";
 const LINKS = [
   { href: "/", label: "Cek" },
   { href: "/history", label: "Riwayat" },
+  { href: "/methodology", label: "Metodologi" },
+  { href: "/admin", label: "Auditor" },
 ];
 
 export default function BrutalistNavbar() {

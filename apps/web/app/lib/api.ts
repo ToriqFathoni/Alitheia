@@ -223,6 +223,81 @@ export async function submitTextCheck(text: string): Promise<SubmitCheckResponse
   return data;
 }
 
+export async function submitDocumentCheck(payload: {
+  fileName: string;
+  mimeType?: string;
+  contentBase64?: string;
+  textContent?: string;
+}): Promise<SubmitCheckResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/checks/upload`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, `HTTP ${res.status}: Gagal mengunggah dokumen`));
+  }
+  return data;
+}
+
+export async function submitFeedback(
+  checkId: string,
+  rating: 'accurate' | 'inaccurate',
+  comment = ''
+): Promise<{ success: boolean; rating: string }> {
+  const res = await fetch(`${API_BASE}/api/v1/checks/${checkId}/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rating, comment }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, `HTTP ${res.status}: Gagal mengirim umpan balik`));
+  }
+  return data;
+}
+
+export interface AdminOverviewResponse {
+  totals: {
+    checks: number;
+    completed: number;
+    failed: number;
+    processing: number;
+    verdicts: {
+      true: number;
+      false: number;
+      unverified: number;
+    };
+    training_data_rows: number;
+    training_data_max: number;
+  };
+  errors: Array<{
+    id: string;
+    source_url: string;
+    input_type: string;
+    error_code: string | null;
+    error_message: string | null;
+    created_at: string;
+  }>;
+  feedback: Array<{
+    id: string | number;
+    check_id: string;
+    rating: string;
+    comment: string;
+    created_at: string;
+  }>;
+}
+
+export async function getAdminOverview(): Promise<AdminOverviewResponse> {
+  const res = await fetch(`${API_BASE}/api/v1/admin/overview`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(extractErrorMessage(data, 'Gagal memuat ringkasan auditor'));
+  }
+  return data;
+}
+
 export async function getCheck(id: string): Promise<CheckDetail> {
   const res = await fetch(`${API_BASE}/api/v1/checks/${id}`);
   if (!res.ok) {
@@ -238,6 +313,7 @@ export async function listChecks(
     page_size?: number;
     verdict?: string;
     platform?: string;
+    input_type?: string;
     q?: string;
   } = {}
 ): Promise<ListChecksResponse> {
@@ -254,5 +330,9 @@ export async function listChecks(
 }
 
 export async function deleteCheck(id: string): Promise<void> {
-  await fetch(`${API_BASE}/api/v1/checks/${id}`, { method: 'DELETE' });
+  const res = await fetch(`${API_BASE}/api/v1/checks/${id}`, { method: 'DELETE' });
+  if (!res.ok && res.status !== 204) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(extractErrorMessage(data, 'Gagal menghapus riwayat'));
+  }
 }

@@ -60,7 +60,16 @@ export default function ClaimsList({ claims = [], sources = [] }: ClaimsListProp
       <div className="flex flex-col gap-4">
         {claims.map((claim, index) => {
           const linked = (claim.source_ids || [])
-            .map((id) => sourcesMap.get(id))
+            .map((id) => {
+              const direct = sourcesMap.get(id);
+              if (direct) return direct;
+              const match = /^src-(\d+)$/i.exec(id);
+              if (match) {
+                const idx = Number(match[1]) - 1;
+                return idx >= 0 && idx < sources.length ? sources[idx] : undefined;
+              }
+              return undefined;
+            })
             .filter((s): s is SourceInfo => s !== undefined);
 
           return (

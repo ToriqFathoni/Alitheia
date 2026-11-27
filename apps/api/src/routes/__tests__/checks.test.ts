@@ -223,4 +223,67 @@ describe("Checks API Endpoints (POST/GET /api/v1/checks)", () => {
       expect(res.body.result?.verdict).toBe("Verified");
     });
   });
+
+  describe("POST /api/v1/checks/upload", () => {
+    it("menerima unggahan dokumen .txt dan mengembalikan 202 Accepted", async () => {
+      const mockId = randomUUID();
+      vi.mocked(dbRepo.createCheck).mockResolvedValue({
+        id: mockId,
+        sourceUrl: "",
+        normalizedUrl: "",
+        inputType: "document",
+        platform: "Document",
+        status: "queued",
+      } as any);
+
+      const content = "Pemerintah mengumumkan jadwal libur nasional tahun 2026 secara resmi.";
+      const res = await request(app)
+        .post("/api/v1/checks/upload")
+        .send({
+          fileName: "pengumuman.txt",
+          contentBase64: Buffer.from(content, "utf8").toString("base64"),
+        });
+
+      expect(res.status).toBe(202);
+      expect(res.body.id).toBe(mockId);
+      expect(res.body.status).toBe("queued");
+    });
+  });
+
+  describe("POST /api/v1/checks/:id/feedback", () => {
+    it("menyimpan umpan balik pengguna untuk check yang ada dan mengembalikan 201", async () => {
+      const mockId = randomUUID();
+      vi.mocked(dbRepo.getCheckDetail).mockResolvedValue({
+        id: mockId,
+        status: "completed",
+      } as any);
+
+      const res = await request(app)
+        .post(`/api/v1/checks/${mockId}/feedback`)
+        .send({ rating: "accurate", comment: "Sumber beritanya sangat relevan" });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.rating).toBe("accurate");
+    });
+
+    it("menolak nilai rating yang tidak valid dengan status 400", async () => {
+      const res = await request(app)
+        .post(`/api/v1/checks/${randomUUID()}/feedback`)
+        .send({ rating: "invalid" });
+
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe("GET /api/v1/admin/overview", () => {
+    it("mengembalikan ringkasan analitik dan umpan balik untuk panel auditor", async () => {
+      const res = await request(app).get("/api/v1/admin/overview");
+
+      expect(res.status).toBe(200);
+      expect(res.body.totals).toBeDefined();
+      expect(Array.isArray(res.body.feedback)).toBe(true);
+      expect(Array.isArray(res.body.errors)).toBe(true);
+    });
+  });
 });

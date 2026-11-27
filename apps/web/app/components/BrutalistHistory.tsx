@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import BrutalistNavbar from "./BrutalistNavbar";
-import { listChecks } from "../lib/api";
+import { deleteCheck, listChecks } from "../lib/api";
 import type { CheckListItem } from "../lib/api";
 
 const PAGE_SIZE = 20;
@@ -12,7 +12,9 @@ const PAGE_SIZE = 20;
 function inputLabel(item: CheckListItem) {
   const type = (item.input_type || "").toLowerCase();
   if (type.includes("text")) return { label: "TEKS", cls: "type-text" };
-  if (type.includes("upload") || type.includes("file")) return { label: "UNGGAH", cls: "type-upload" };
+  if (type.includes("doc") || type.includes("upload") || type.includes("file")) {
+    return { label: "DOKUMEN", cls: "type-upload" };
+  }
   return { label: "LINK", cls: "type-link" };
 }
 
@@ -61,41 +63,63 @@ const FILTERS = [
   { label: "Semua", value: "" },
   { label: "Teks", value: "text" },
   { label: "Link", value: "url" },
+  { label: "Dokumen", value: "document" },
 ];
 
 export default function BrutalistHistory() {
   const router = useRouter();
   const [items, setItems] = useState<CheckListItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [inputType, setInputType] = useState("");
   const [verdict, setVerdict] = useState("");
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchHistory = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await listChecks({
-        page: 1,
-        page_size: PAGE_SIZE,
-        q: search.trim() || undefined,
-        platform: inputType || undefined,
-        verdict: verdict || undefined,
-      });
-      setItems(response.data || []);
-      setTotal(response.total || 0);
-      setError(null);
-    } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "Gagal memuat riwayat");
-    } finally {
-      setLoading(false);
-    }
-  }, [inputType, search, verdict]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   useEffect(() => {
-    fetchHistory();
-  }, [fetchHistory]);
+    let active = true;
+    listChecks({
+      page,
+      page_size: PAGE_SIZE,
+      q: search.trim() || undefined,
+      input_type: inputType || undefined,
+      verdict: verdict || undefined,
+    })
+      .then((response) => {
+        if (!active) return;
+        setItems(response.data || []);
+        setTotal(response.total || 0);
+        setError(null);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(reason instanceof Error ? reason.message : "Gagal memuat riwayat");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [inputType, page, search, verdict]);
+
+  const handleDelete = async (id: string) => {
+    if (deletingId) return;
+    setDeletingId(id);
+    try {
+      await deleteCheck(id);
+      setItems((prev) => prev.filter((item) => item.id !== id));
+      setTotal((prev) => Math.max(0, prev - 1));
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Gagal menghapus riwayat");
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="shell">
@@ -112,7 +136,10 @@ export default function BrutalistHistory() {
               id="history-search"
               type="search"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
               placeholder="Cari klaim atau link..."
             />
           </div>
@@ -125,7 +152,10 @@ export default function BrutalistHistory() {
                   key={filter.label}
                   type="button"
                   aria-pressed={inputType === filter.value}
-                  onClick={() => setInputType(filter.value)}
+                  onClick={() => {
+                    setInputType(filter.value);
+                    setPage(1);
+                  }}
                 >
                   {filter.label}
                 </button>
@@ -138,7 +168,10 @@ export default function BrutalistHistory() {
             <select
               id="history-verdict"
               value={verdict}
-              onChange={(event) => setVerdict(event.target.value)}
+              onChange={(event) => {
+                setVerdict(event.target.value);
+                setPage(1);
+              }}
             >
               <option value="">Semua hasil</option>
               {/* Values match the stored verdict strings exactly. */}
@@ -172,19 +205,56 @@ export default function BrutalistHistory() {
               const source = item.input_text || item.source_url || "(tanpa judul)";
 
               return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="history-row"
-                  onClick={() => router.push(`/checks/${item.id}`)}
-                >
-                  <span className={`type-tag ${type.cls}`}>{type.label}</span>
-                  <span className="history-source" title={source}>{source}</span>
-                  <span className={`verdict-tag ${result.cls}`}>{result.label}</span>
-                  <span className="history-date">{formatDate(item.created_at)}</span>
-                </button>
+                <div key={item.id} className="flex items-stretch gap-2">
+                  <button
+                    type="button"
+                    className="history-row flex-1"
+                    onClick={() => router.push(`/checks/${item.id}`)}
+                  >
+                    <span className={`type-tag ${type.cls}`}>{type.label}</span>
+                    <span className="history-source" title={source}>{source}</span>
+                    <span className={`verdict-tag ${result.cls}`}>{result.label}</span>
+                    <span className="history-date">{formatDate(item.created_at)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Hapus riwayat ${source}`}
+                    disabled={deletingId === item.id}
+                    onClick={() => handleDelete(item.id)}
+                    className="btn-secondary shrink-0 px-3 text-xs"
+                    style={{ minHeight: "auto" }}
+                  >
+                    {deletingId === item.id ? "..." : "Hapus"}
+                  </button>
+                </div>
               );
             })
+          )}
+
+          {totalPages > 1 && (
+            <div className="mt-5 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                style={{ minHeight: "40px" }}
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ← Sebelumnya
+              </button>
+              <span className="text-xs font-bold" style={{ color: "var(--ink-soft)" }}>
+                Halaman {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                style={{ minHeight: "40px" }}
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Berikutnya →
+              </button>
+            </div>
           )}
         </section>
       </div>
